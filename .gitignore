@@ -1,12 +1,19 @@
+# macOS
 .DS_Store
 
+# Xcode build
 build/
 DerivedData/
 
-*.xcuserstate
-xcuserdata/
+# Xcode
+*.xcworkspace
+!default.xcworkspace
 
+# Ignore all user-specific Xcode data
+**/xcuserdata/
+**/*.xcuserstate
+
+# SwiftPM
 .swiftpm/
 .packages/
-
 Package.resolved
