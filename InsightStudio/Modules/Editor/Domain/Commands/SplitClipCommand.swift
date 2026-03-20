@@ -1,8 +1,8 @@
 import Foundation
 
-public struct SplitClipCommand: TimelineCommand {
-    public let clipID: UUID
-    public let timelineSplitSeconds: Double
+struct SplitClipCommand: TimelineCommand {
+    let clipID: UUID
+    let timelineSplitSeconds: Double
 
     private var originalClip: Clip?
     private var originalIndex: Int?
@@ -11,53 +11,39 @@ public struct SplitClipCommand: TimelineCommand {
     private var previousSelection: UUID?
     private var previousPlayhead: Double?
 
-    public var description: String { "Split Clip" }
+    var description: String { "Split Clip" }
 
-    public init(clipID: UUID, timelineSplitSeconds: Double) {
+    init(clipID: UUID, timelineSplitSeconds: Double) {
         self.clipID = clipID
         self.timelineSplitSeconds = timelineSplitSeconds
     }
 
-    public mutating func apply(to draft: inout TimelineDraft) {
+    mutating func apply(to draft: inout TimelineDraft) {
         guard let index = draft.clips.firstIndex(where: { $0.id == clipID }) else { return }
         let clip = draft.clips[index]
+        let clipStart = draft.timelineStartTime(of: clipID) ?? 0
+        let timelineOffset = timelineSplitSeconds - clipStart
+        guard timelineOffset > 0, timelineOffset < clip.renderedDuration else { return }
 
-        let clipStart = timelineStartSeconds(of: clipID, in: draft)
-        let offsetOnTimeline = timelineSplitSeconds - clipStart
-        guard offsetOnTimeline > 0, offsetOnTimeline < clip.renderedDuration else { return }
-
-        let sourceSplitOffset = offsetOnTimeline * clip.playbackRate
-        guard sourceSplitOffset > 0, sourceSplitOffset < clip.sourceRange.duration else { return }
+        let sourceOffset = timelineOffset * clip.playbackRate
+        guard sourceOffset > 0, sourceOffset < clip.sourceRange.duration else { return }
 
         originalClip = clip
         originalIndex = index
         previousSelection = draft.selectedClipID
         previousPlayhead = draft.playheadSeconds
 
-        let left = Clip(
-            asset: clip.asset,
-            displayName: "\(clip.displayName)-A",
-            sourceRange: TimeRange(
-                start: clip.sourceRange.start,
-                duration: sourceSplitOffset
-            ),
-            playbackRate: clip.playbackRate,
-            transform: clip.transform,
-            animation: clip.animation
-        )
-
-        let right = Clip(
-            asset: clip.asset,
-            displayName: "\(clip.displayName)-B",
-            sourceRange: TimeRange(
-                start: clip.sourceRange.start + sourceSplitOffset,
-                duration: clip.sourceRange.duration - sourceSplitOffset
-            ),
-            playbackRate: clip.playbackRate,
-            transform: clip.transform,
-            animation: clip.animation
-        )
-
+        let left = Clip(asset: clip.asset,
+                        displayName: clip.displayName + "-A",
+                        sourceRange: .init(start: clip.sourceRange.start, duration: sourceOffset),
+                        playbackRate: clip.playbackRate,
+                        transform: clip.transform)
+        let right = Clip(asset: clip.asset,
+                         displayName: clip.displayName + "-B",
+                         sourceRange: .init(start: clip.sourceRange.start + sourceOffset,
+                                            duration: clip.sourceRange.duration - sourceOffset),
+                         playbackRate: clip.playbackRate,
+                         transform: clip.transform)
         leftClip = left
         rightClip = right
 
@@ -67,24 +53,12 @@ public struct SplitClipCommand: TimelineCommand {
         draft.playheadSeconds = timelineSplitSeconds
     }
 
-    public mutating func undo(on draft: inout TimelineDraft) {
+    mutating func undo(on draft: inout TimelineDraft) {
         guard let originalClip, let originalIndex, let leftClip, let rightClip else { return }
-
         draft.clips.removeAll { $0.id == leftClip.id || $0.id == rightClip.id }
-        let safeIndex = min(max(originalIndex, 0), draft.clips.count)
-        draft.clips.insert(originalClip, at: safeIndex)
+        let safe = min(max(originalIndex, 0), draft.clips.count)
+        draft.clips.insert(originalClip, at: safe)
         draft.selectedClipID = previousSelection ?? originalClip.id
-        if let previousPlayhead {
-            draft.playheadSeconds = previousPlayhead
-        }
-    }
-
-    private func timelineStartSeconds(of clipID: UUID, in draft: TimelineDraft) -> Double {
-        var cursor = 0.0
-        for clip in draft.clips {
-            if clip.id == clipID { return cursor }
-            cursor += clip.renderedDuration
-        }
-        return 0
+        if let previousPlayhead { draft.playheadSeconds = previousPlayhead }
     }
 }

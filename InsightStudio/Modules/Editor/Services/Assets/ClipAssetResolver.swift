@@ -1,28 +1,35 @@
-import AVFoundation
 import Foundation
+import AVFoundation
 
-public protocol ClipAssetResolver {
+protocol ClipAssetResolver {
     func resolveURL(for asset: ClipAsset) async throws -> URL
     func resolveAsset(for asset: ClipAsset) async throws -> AVAsset
 }
 
-public enum ClipAssetResolverError: Error {
-    case remoteAssetNotDownloaded
-}
+final class DefaultClipAssetResolver: ClipAssetResolver {
+    private let fallbackProvider: DemoLocalAssetProvider?
 
-public final class DefaultClipAssetResolver: ClipAssetResolver {
-    public init() {}
+    init(fallbackProvider: DemoLocalAssetProvider? = nil) {
+        self.fallbackProvider = fallbackProvider
+    }
 
-    public func resolveURL(for asset: ClipAsset) async throws -> URL {
+    func resolveURL(for asset: ClipAsset) async throws -> URL {
         switch asset {
         case .localFile(let url):
             return url
         case .remoteVideo:
-            throw ClipAssetResolverError.remoteAssetNotDownloaded
+            if let fallback = fallbackProvider?.nextLocalAssetURL() {
+                return fallback
+            }
+            throw NSError(
+                domain: "Editor",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "远端素材解析未接入，当前 Demo 需要本地 mp4/mov 素材或 Bundle fallback 文件"]
+            )
         }
     }
 
-    public func resolveAsset(for asset: ClipAsset) async throws -> AVAsset {
+    func resolveAsset(for asset: ClipAsset) async throws -> AVAsset {
         let url = try await resolveURL(for: asset)
         return AVURLAsset(url: url)
     }

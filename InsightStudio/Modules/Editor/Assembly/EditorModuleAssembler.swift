@@ -1,16 +1,16 @@
 import Foundation
 
-public enum EditorModuleAssembler {
-    @MainActor
-    public static func build(initialDraft: TimelineDraft = TimelineDraft()) -> EditorViewController {
-        let resolver = DefaultClipAssetResolver()
-        let compositionBuilder = CompositionBuilder(resolver: resolver)
-        let previewService = DefaultEditorPreviewService(compositionBuilder: compositionBuilder)
+struct EditorModuleAssembler {
+    static func makeEditorViewController(initialDraft: TimelineDraft = TimelineDraft()) -> EditorViewController {
+        let demoLocalAssetProvider = BundleDemoLocalAssetProvider()
+        let resolver = DefaultClipAssetResolver(fallbackProvider: demoLocalAssetProvider)
+        let previewService = DefaultEditorPreviewService(resolver: resolver)
         let timelineLayoutService = DefaultTimelineLayoutService()
         let viewModel = EditorViewModel(
             initialDraft: initialDraft,
             timelineLayoutService: timelineLayoutService,
-            previewService: previewService
+            previewService: previewService,
+            demoLocalAssetProvider: demoLocalAssetProvider
         )
         return EditorViewController(viewModel: viewModel)
     }
