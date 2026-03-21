@@ -16,7 +16,22 @@ final class EditorCoordinator {
     }
 
     func showClipEditor(clip: ImportedClip) {
-        let vc = ClipEditorViewController(clip: clip, context: context)
+//        let vc = ClipEditorViewController(clip: clip, context: context)
+        let start = max(0, clip.selectedStartSeconds)
+        let end = max(start, clip.selectedEndSeconds)
+        guard let url = URL(string: clip.remoteStreamURL) else {
+            // 处理错误：URL 不合法
+            return
+        }
+        let asset: ClipAsset = .localFile(url: url)
+        let rawClip = Clip(
+            id: clip.id,
+            asset: asset,
+            displayName: clip.title,
+            sourceRange: TimeRange(start: start, duration: max(end - start, 0.1))
+        )
+        let initialDraft = TimelineDraft(clips: [rawClip], selectedClipID: rawClip.id)
+        let vc = EditorModuleAssembler.makeEditorViewController(initialDraft: initialDraft, context: context)
         navigationController.pushViewController(vc, animated: true)
     }
 }

@@ -102,20 +102,83 @@ final class VideoDetailViewController: UIViewController {
     }
 
     @objc private func importClip() {
-        guard let info = currentPlaybackInfo else { return }
+        Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                try await self.importClipAsync()
+            } catch {
+                await MainActor.run {
+                    let alert = UIAlertController(
+                        title: "导入失败",
+                        message: error.localizedDescription,
+                        preferredStyle: .alert
+                    )
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    self.present(alert, animated: true)
+                }
+            }
+        }
+    }
+    
+    private func importClipAsync() async throws {
+        guard let info = currentPlaybackInfo else {
+            throw NSError(
+                domain: "Import",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "缺少播放信息"]
+            )
+        }
+
+        let assetID = UUID().uuidString
+
+        guard let remoteURL = URL(string: info.streamURL) else {
+            throw NSError(
+                domain: "Import",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "无效的视频地址"]
+            )
+        }
+
+        let localURL = try await ClipDownloadService().downloadVideo(
+            from: remoteURL,
+            assetID: assetID
+        )
+
+        let asset = AVURLAsset(url: localURL)
+        let duration = try await asset.load(.duration)
+        let durationSeconds = duration.seconds
+
+        guard durationSeconds.isFinite, durationSeconds > 0 else {
+            throw NSError(
+                domain: "Import",
+                code: -3,
+                userInfo: [NSLocalizedDescriptionKey: "本地视频时长无效"]
+            )
+        }
+
         let clip = ImportedClip(
+            sourceID: assetID,
             videoId: video.videoId,
             title: video.title,
             thumbnailURL: video.thumbnailURL,
             remoteStreamURL: info.streamURL,
+            localFileURL: localURL,
+            durationSeconds: durationSeconds,
             selectedStartSeconds: 0,
             selectedEndSeconds: Double(min(info.durationSeconds ?? 15, 15))
         )
         context.clipLibraryRepository.save(clip)
         context.importSignalCenter.importedClip.send(clip)
 
-        let alert = UIAlertController(title: "已导入", message: "素材已加入 Editor 工作台", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
+        await MainActor.run {
+            let alert = UIAlertController(
+                title: "已导入",
+                message: "素材已加入 Editor 工作台",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            self.present(alert, animated: true)
+        }
     }
 }

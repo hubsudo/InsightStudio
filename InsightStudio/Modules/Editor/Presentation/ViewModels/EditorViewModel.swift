@@ -16,8 +16,9 @@ struct EditorViewState: Equatable {
     var canRedo: Bool
     var errorMessage: String?
     var timelineItems: [TimelineLayoutItem]
+    var isPlaying: Bool
 
-    static let empty = EditorViewState(draft: TimelineDraft(), canUndo: false, canRedo: false, errorMessage: nil, timelineItems: [])
+    static let empty = EditorViewState(draft: TimelineDraft(), canUndo: false, canRedo: false, errorMessage: nil, timelineItems: [], isPlaying: false)
 }
 
 @MainActor
@@ -44,6 +45,16 @@ final class EditorViewModel: ObservableObject {
         self.timelineLayoutService = timelineLayoutService
         self.previewService = previewService
         self.demoLocalAssetProvider = demoLocalAssetProvider
+        self.previewService.onPlaybackTimeChange = { [weak self] seconds in
+            Task { @MainActor [weak self] in
+                self?.syncPlaybackTime(seconds)
+            }
+        }
+        self.previewService.onPlaybackStateChange = { [weak self] isPlaying in
+            Task { @MainActor [weak self] in
+                self?.state.isPlaying = isPlaying
+            }
+        }
         Task { [weak self] in
             guard let self else { return }
             await self.syncState()
@@ -51,20 +62,9 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    func appendDemoClip() {
-        appendMockClip(localURL: demoLocalAssetProvider?.nextLocalAssetURL())
-    }
-
-    func appendMockClip(localURL: URL? = nil) {
-        let clip = makeMockClip(localURL: localURL)
+    func appendImportedClip(_ importedClip: ImportedClip) {
+        let clip = makeClip(from: importedClip)
         historyManager.perform(InsertClipCommand(clip: clip, index: state.draft.clips.count))
-        triggerSyncAndPreview()
-    }
-
-    func insertMockClipAfterSelection(localURL: URL? = nil) {
-        let insertIndex = (state.draft.indexOfSelectedClip() ?? (state.draft.clips.count - 1)) + 1
-        let clip = makeMockClip(localURL: localURL ?? demoLocalAssetProvider?.nextLocalAssetURL())
-        historyManager.perform(InsertClipCommand(clip: clip, index: max(insertIndex, 0)))
         triggerSyncAndPreview()
     }
 
@@ -76,6 +76,43 @@ final class EditorViewModel: ObservableObject {
     func movePlayhead(to seconds: Double) {
         historyManager.updateDraft { $0.playheadSeconds = max(0, min(seconds, $0.totalDuration)) }
         triggerSyncAndPreview(updateLayout: false)
+    }
+
+    func togglePlayback() {
+        guard state.draft.totalDuration > 0 else { return }
+        if !state.isPlaying, state.draft.playheadSeconds >= state.draft.totalDuration {
+            historyManager.updateDraft { $0.playheadSeconds = 0 }
+            state.draft.playheadSeconds = 0
+        }
+        state.isPlaying.toggle()
+        refreshPreview()
+    }
+
+    func trimSelectedClip(using handle: TimelineTrimHandle) {
+        guard let selectedClip = state.draft.selectedClip(),
+              let timelineRange = state.draft.timelineRange(of: selectedClip.id) else {
+            state.errorMessage = "请先选中一个片段"
+            return
+        }
+
+        let clampedPlayhead = min(max(state.draft.playheadSeconds, timelineRange.start), timelineRange.end)
+        var previewClip = selectedClip
+        switch handle {
+        case .left:
+            let delta = clampedPlayhead - timelineRange.start
+            guard delta > 0 else { return }
+            previewClip.sourceRange.start += delta * selectedClip.playbackRate
+            previewClip.sourceRange.duration -= delta * selectedClip.playbackRate
+        case .right:
+            let nextDuration = (clampedPlayhead - timelineRange.start) * selectedClip.playbackRate
+            guard nextDuration > 0, nextDuration < selectedClip.sourceRange.duration else { return }
+            previewClip.sourceRange.duration = nextDuration
+        }
+        guard previewClip != selectedClip else { return }
+
+        historyManager.perform(TrimClipCommand(clipID: selectedClip.id, playheadSeconds: clampedPlayhead, handle: handle))
+        state.isPlaying = false
+        triggerSyncAndPreview(playbackOverride: false)
     }
 
     func splitSelectedClipAtPlayhead() {
@@ -176,11 +213,14 @@ final class EditorViewModel: ObservableObject {
         return PreviewSnapshot(clipID: nil, clipName: "无预览", timelineTime: time, localClipTime: 0)
     }
 
-    private func triggerSyncAndPreview(updateLayout: Bool = true) {
+    private func triggerSyncAndPreview(updateLayout: Bool = true, playbackOverride: Bool? = nil) {
         Task { [weak self] in
             guard let self else { return }
             if updateLayout { await self.timelineLayoutService.invalidateCache() }
             await self.syncState()
+            if let playbackOverride {
+                self.state.isPlaying = playbackOverride
+            }
             self.refreshPreview()
         }
     }
@@ -198,7 +238,8 @@ final class EditorViewModel: ObservableObject {
             canUndo: historyManager.canUndo,
             canRedo: historyManager.canRedo,
             errorMessage: nil,
-            timelineItems: items
+            timelineItems: items,
+            isPlaying: previewService.isPlaying
         )
     }
 
@@ -206,20 +247,37 @@ final class EditorViewModel: ObservableObject {
         previewTask?.cancel()
         let draft = state.draft
         let t = draft.playheadSeconds
+        let shouldPlay = state.isPlaying
         previewTask = Task { [weak self] in
             guard let self else { return }
-            try? await self.previewService.updatePreview(draft: draft, at: t)
+            do {
+                try await self.previewService.updatePreview(draft: draft, at: t, shouldPlay: shouldPlay)
+            } catch {
+                self.state.isPlaying = false
+                self.state.errorMessage = "预览生成失败：\(error.localizedDescription)"
+                //TODO: 无限循环
+            }
         }
     }
 
-    private func makeMockClip(localURL: URL?) -> Clip {
-        let index = mockAssetCounter
-        mockAssetCounter += 1
-        let duration = Double([3,4,5,6].randomElement() ?? 4)
+    private func syncPlaybackTime(_ seconds: Double) {
+        let clamped = max(0, min(seconds, historyManager.draft.totalDuration))
+        historyManager.updateDraft { $0.playheadSeconds = clamped }
+        state.draft.playheadSeconds = clamped
+        if clamped >= historyManager.draft.totalDuration {
+            state.isPlaying = false
+        }
+    }
+
+    private func makeClip(from importedClip: ImportedClip) -> Clip {
+        let start = max(0, importedClip.selectedStartSeconds)
+        let end = max(start, importedClip.selectedEndSeconds)
+        let asset: ClipAsset = .localFile(url: importedClip.localFileURL)
         return Clip(
-            asset: localURL.map { .localFile(url: $0) } ?? .remoteVideo(videoID: "mock-\(index)", title: "素材\(index)", thumbnailURL: nil),
-            displayName: localURL == nil ? "素材\(index)" : "本地素材\(index)",
-            sourceRange: TimeRange(start: 0, duration: duration),
+            id: importedClip.id,
+            asset: asset,
+            displayName: importedClip.title,
+            sourceRange: TimeRange(start: start, duration: max(end - start, 0.1)),
             playbackRate: 1.0,
             transform: .identity
         )

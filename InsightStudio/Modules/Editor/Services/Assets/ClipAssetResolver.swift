@@ -17,15 +17,6 @@ final class DefaultClipAssetResolver: ClipAssetResolver {
         switch asset {
         case .localFile(let url):
             return url
-        case .remoteVideo:
-            if let fallback = fallbackProvider?.nextLocalAssetURL() {
-                return fallback
-            }
-            throw NSError(
-                domain: "Editor",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "远端素材解析未接入，当前 Demo 需要本地 mp4/mov 素材或 Bundle fallback 文件"]
-            )
         }
     }
 

@@ -3,6 +3,8 @@ import UIKit
 
 final class EditorWorkspaceViewController: UIViewController {
     var onSelectClip: ((ImportedClip) -> Void)?
+    var clipFilter: ((ImportedClip) -> Bool)?
+    var screenTitle: String?
 
     private let viewModel: EditorWorkspaceViewModel
     private let imagePipeline: ImagePipeline
@@ -34,7 +36,7 @@ final class EditorWorkspaceViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Editor"
+        title = screenTitle ?? "Editor"
         view.backgroundColor = .systemBackground
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
@@ -51,22 +53,28 @@ final class EditorWorkspaceViewController: UIViewController {
             }
             .store(in: &cancellables)
     }
+
+    private var displayedClips: [ImportedClip] {
+        viewModel.clips.filter { clip in
+            clipFilter?(clip) ?? true
+        }
+    }
 }
 
 extension EditorWorkspaceViewController: UICollectionViewDataSource, UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        viewModel.clips.count
+        displayedClips.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ImportedClipCell.reuseID, for: indexPath) as? ImportedClipCell else {
             return UICollectionViewCell()
         }
-        cell.configure(with: viewModel.clips[indexPath.item], pipeline: imagePipeline)
+        cell.configure(with: displayedClips[indexPath.item], pipeline: imagePipeline)
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        onSelectClip?(viewModel.clips[indexPath.item])
+        onSelectClip?(displayedClips[indexPath.item])
     }
 }

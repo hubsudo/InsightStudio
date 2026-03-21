@@ -10,7 +10,6 @@ struct TimeRange: Equatable {
 
 enum ClipAsset: Equatable {
     case localFile(url: URL)
-    case remoteVideo(videoID: String, title: String?, thumbnailURL: URL?)
 }
 
 struct VideoTransform: Equatable {
@@ -79,5 +78,13 @@ struct TimelineDraft: Equatable {
             cursor += clip.renderedDuration
         }
         return nil
+    }
+
+    func timelineRange(of clipID: UUID) -> TimeRange? {
+        guard let start = timelineStartTime(of: clipID),
+              let clip = clips.first(where: { $0.id == clipID }) else {
+            return nil
+        }
+        return TimeRange(start: start, duration: clip.renderedDuration)
     }
 }
