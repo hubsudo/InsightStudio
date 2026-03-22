@@ -1,37 +1,41 @@
 import Foundation
 
-final class HistoryManager {
-    private(set) var draft: TimelineDraft
-    private var undoStack: [any TimelineCommand] = []
-    private var redoStack: [any TimelineCommand] = []
+struct CommandPair: Sendable {
+    let forward: any EditorCommand
+    let backward: any EditorCommand
 
-    init(initialDraft: TimelineDraft = TimelineDraft()) {
-        self.draft = initialDraft
+    init(forward: any EditorCommand, backward: any EditorCommand) {
+        self.forward = forward
+        self.backward = backward
     }
+}
 
-    func perform<C: TimelineCommand>(_ command: C) {
-        var cmd = command
-        cmd.apply(to: &draft)
-        undoStack.append(cmd)
-        redoStack.removeAll()
-    }
+final class HistoryManager: @unchecked Sendable {
+    private var undoStack: [CommandPair] = []
+    private var redoStack: [CommandPair] = []
 
-    func updateDraft(_ update: (inout TimelineDraft) -> Void) {
-        update(&draft)
-    }
-
-    func undo() {
-        guard var cmd = undoStack.popLast() else { return }
-        cmd.undo(on: &draft)
-        redoStack.append(cmd)
-    }
-
-    func redo() {
-        guard var cmd = redoStack.popLast() else { return }
-        cmd.apply(to: &draft)
-        undoStack.append(cmd)
-    }
+    init() {}
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
+
+    func perform(_ command: any EditorCommand, on draft: inout EditorDraft) {
+        let old = draft
+        command.apply(to: &draft)
+        let inverse = command.makeInverse(from: old)
+        undoStack.append(.init(forward: command, backward: inverse))
+        redoStack.removeAll()
+    }
+
+    func undo(on draft: inout EditorDraft) {
+        guard let pair = undoStack.popLast() else { return }
+        pair.backward.apply(to: &draft)
+        redoStack.append(pair)
+    }
+
+    func redo(on draft: inout EditorDraft) {
+        guard let pair = redoStack.popLast() else { return }
+        pair.forward.apply(to: &draft)
+        undoStack.append(pair)
+    }
 }

@@ -1,5 +1,6 @@
 import UIKit
 
+@MainActor
 enum EditorModuleBuilder {
     static func build(context: AppContext, coordinator: EditorCoordinator) -> UIViewController {
         let viewModel = EditorWorkspaceViewModel(

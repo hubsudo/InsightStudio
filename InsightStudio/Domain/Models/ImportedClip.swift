@@ -1,6 +1,6 @@
 import Foundation
 
-struct ImportedClip: Codable, Hashable {
+struct ImportedClip: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     let sourceID: String
     let videoId: String

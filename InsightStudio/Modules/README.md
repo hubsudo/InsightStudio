@@ -1,36 +1,32 @@
-# InsightStudio Editor Composition Preview Module
+# InsightStudio Editor Module
 
-This package contains a UIKit-based Editor module scaffold focused on **timeline editing + AVMutableComposition real-time preview**.
+UIKit + MVVM editor module with:
+- single source of truth (`EditorStore`)
+- command/history undo-redo
+- timeline background layout precomputation
+- dirty flag + local invalidate entry points
+- ruler
+- magnetic snapping for append / playhead seeking
+- pinch anchored zoom that keeps playhead visually stable
+- append remote clip workflow
 
-## What is included
-- Single source of truth: `TimelineDraft`
-- Command-based editing: insert / delete / split
-- Undo / Redo: `HistoryManager`
-- Horizontal timeline MVP: `TimelineView`
-- Real-time composition preview service: `DefaultEditorPreviewService`
-- AVPlayer-backed preview container: `PreviewContainerView`
-- ViewModel aggregation: `EditorViewModel`
-- Basic module assembly: `EditorModuleAssembler`
+## Suggested file paths in app
 
-## Preview strategy
-Instead of only previewing the currently selected clip, this module rebuilds an `AVMutableComposition` from the full `TimelineDraft`, creates an `AVPlayerItem`, and seeks the player to the current `playheadSeconds`.
+- `Features/Editor/Core/*`
+- `Features/Editor/Models/*`
+- `Features/Editor/History/*`
+- `Features/Editor/Timeline/*`
+- `Features/Editor/ViewModels/*`
+- `Features/Editor/Views/*`
+- `Features/Editor/Controllers/*`
 
-For MVP simplicity, the composition is rebuilt whenever the draft changes. In production you would likely add:
-- debounce/coalescing for drag-heavy interactions
-- caching of partial compositions
-- operation cancellation
-- audio mix / video composition instructions
-- timeline dirty flags and granular rebuilds
+## Not implemented on purpose
+
+Per request, this package does **not** implement move / trim / split / waveform rendering. Snap service and dirty hooks are left ready for those commands.
 
 ## Integration notes
-- This package is intentionally self-contained and avoids dependencies on your existing app context.
-- Replace `MockClipFactory` / local URLs with your actual clip repository or imported assets.
-- `DefaultClipAssetResolver` assumes local files for successful composition preview.
-- `ClipAsset.remoteVideo` is preserved in the model for future YouTube Data API v3 integration, but composition preview currently requires a resolvable local media URL.
 
-## Suggested next steps
-1. Hook your imported assets repository into `ClipAssetResolver`
-2. Replace mock insert actions with material picker flow
-3. Add move / playback-rate / transform / animation commands
-4. Introduce timeline layout cache + dirty flags
-5. Add export path reusing the same `CompositionBuilder`
+1. Replace the demo `ImportedClipRepository` with your project repository.
+2. Replace the demo `ImagePipeline` with your thumbnail loader.
+3. Wire `EditorViewController` into your coordinator on the main actor.
+4. Keep all UIKit in `@MainActor` view/view-model/controller layers. Layout cache/engine stay pure-data and run off the main actor.

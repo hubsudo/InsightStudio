@@ -2,6 +2,9 @@ import UIKit
 
 protocol ImagePipeline {
     func loadImage(from urlString: String) async -> UIImage?
+//    func loadImage(from url: URL?, completion: @escaping (UIImage?) -> Void) {
+//        completion(nil)
+//    }
 }
 
 actor ImageTaskStore {

@@ -1,3 +1,10 @@
+//
+//  PreviewContainerView.swift
+//  InsightStudio
+//
+//  Created by chenrunhuan on 2026/3/22.
+//
+
 import UIKit
 import AVFoundation
 
@@ -16,3 +23,4 @@ final class PreviewContainerView: UIView {
         playerLayer.frame = bounds
     }
 }
+

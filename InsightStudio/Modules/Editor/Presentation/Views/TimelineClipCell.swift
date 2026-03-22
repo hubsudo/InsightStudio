@@ -1,34 +1,34 @@
 import UIKit
 
 final class TimelineClipCell: UICollectionViewCell {
-    static let reuseID = "TimelineClipCell"
+    static let reuseIdentifier = "TimelineClipCell"
+
     private let titleLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        contentView.backgroundColor = .systemBlue.withAlphaComponent(0.15)
         contentView.layer.cornerRadius = 10
         contentView.layer.borderWidth = 1
-        contentView.layer.borderColor = UIColor.separator.cgColor
-        contentView.backgroundColor = .secondarySystemBackground
+        contentView.layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.3).cgColor
 
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = .label
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.numberOfLines = 2
         contentView.addSubview(titleLabel)
-
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
             titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         ])
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
-    func configure(title: String, isSelected: Bool) {
+    func configure(title: String) {
         titleLabel.text = title
-        contentView.backgroundColor = isSelected ? UIColor.systemBlue.withAlphaComponent(0.2) : .secondarySystemBackground
-        contentView.layer.borderColor = isSelected ? UIColor.systemBlue.cgColor : UIColor.separator.cgColor
-        contentView.layer.borderWidth = isSelected ? 2 : 1
     }
 }

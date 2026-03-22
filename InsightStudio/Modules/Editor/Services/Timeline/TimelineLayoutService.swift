@@ -1,97 +1,27 @@
 import Foundation
-import CoreGraphics
-import UIKit
 
-struct TimelineLayoutItem: Equatable {
-    let clipID: UUID
-    let frame: CGRect
-    let startTime: Double
-    let endTime: Double
-    let title: String
-}
+final class TimelineLayoutService: @unchecked Sendable {
+    private let cacheActor = TimelineLayoutCacheActor()
 
-struct TimelineLayoutKey: Equatable {
-    let clipIDs: [UUID]
-    let renderedDurations: [Double]
-    let pixelsPerSecond: CGFloat
-    let trackHeight: CGFloat
-    let contentInset: UIEdgeInsets
-}
+    init() {}
 
-struct TimelineLayoutCache {
-    var key: TimelineLayoutKey?
-    var items: [TimelineLayoutItem] = []
-}
-
-actor TimelineCacheActor {
-    private var cache = TimelineLayoutCache()
-
-    func cachedItems(for key: TimelineLayoutKey) -> [TimelineLayoutItem]? {
-        cache.key == key ? cache.items : nil
-    }
-
-    func store(items: [TimelineLayoutItem], for key: TimelineLayoutKey) {
-        cache.key = key
-        cache.items = items
-    }
-
-    func invalidate() {
-        cache = TimelineLayoutCache()
-    }
-}
-
-protocol TimelineLayoutService {
-    func makeLayout(
-        for draft: TimelineDraft,
-        pixelsPerSecond: CGFloat,
-        trackHeight: CGFloat,
-        contentInset: UIEdgeInsets
-    ) async -> [TimelineLayoutItem]
-
-    func invalidateCache() async
-}
-
-final class DefaultTimelineLayoutService: TimelineLayoutService {
-    private let cacheActor = TimelineCacheActor()
-
-    func makeLayout(
-        for draft: TimelineDraft,
-        pixelsPerSecond: CGFloat,
-        trackHeight: CGFloat,
-        contentInset: UIEdgeInsets
-    ) async -> [TimelineLayoutItem] {
-        let key = TimelineLayoutKey(
-            clipIDs: draft.clips.map(\.id),
-            renderedDurations: draft.clips.map(\.renderedDuration),
-            pixelsPerSecond: pixelsPerSecond,
-            trackHeight: trackHeight,
-            contentInset: contentInset
-        )
-
-        if let cached = await cacheActor.cachedItems(for: key) { return cached }
-
-        var result: [TimelineLayoutItem] = []
-        var cursor = 0.0
-        for clip in draft.clips {
-            let width = max(CGFloat(clip.renderedDuration) * pixelsPerSecond, 48)
-            let x = contentInset.left + CGFloat(cursor) * pixelsPerSecond
-            result.append(
-                TimelineLayoutItem(
-                    clipID: clip.id,
-                    frame: CGRect(x: x, y: contentInset.top, width: width, height: trackHeight),
-                    startTime: cursor,
-                    endTime: cursor + clip.renderedDuration,
-                    title: clip.displayName
-                )
-            )
-            cursor += clip.renderedDuration
+    func makeSnapshot(
+        clips: [TimelineClipLayoutInput],
+        key: TimelineLayoutKey
+    ) async -> TimelineLayoutSnapshot {
+        if let cached = await cacheActor.cachedSnapshot(for: key) {
+            return cached
         }
-
-        await cacheActor.store(items: result, for: key)
-        return result
+        let generation = await cacheActor.nextGeneration()
+        let previous = await cacheActor.latestSnapshot()
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            TimelineLayoutEngine.buildSnapshot(clips: clips, key: key, previous: previous, generation: generation)
+        }.value
+        await cacheActor.store(snapshot)
+        return snapshot
     }
 
-    func invalidateCache() async {
-        await cacheActor.invalidate()
+    func invalidateAll() async {
+        await cacheActor.invalidateAll()
     }
 }
