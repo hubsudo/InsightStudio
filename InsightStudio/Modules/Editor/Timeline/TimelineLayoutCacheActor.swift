@@ -4,8 +4,6 @@ actor TimelineLayoutCacheActor {
     private var latest: TimelineLayoutSnapshot?
     private var generation: Int = 0
 
-    init() {}
-
     func nextGeneration() -> Int {
         generation += 1
         return generation

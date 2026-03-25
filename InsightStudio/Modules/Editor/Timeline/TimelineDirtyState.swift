@@ -12,8 +12,6 @@ struct TimelineDirtyState: Sendable {
     var needsFullRelayout: Bool = true
     var dirtyClipIDs: Set<UUID> = []
 
-    init() {}
-
     mutating func markAllDirty() {
         needsFullRelayout = true
         dirtyClipIDs.removeAll()

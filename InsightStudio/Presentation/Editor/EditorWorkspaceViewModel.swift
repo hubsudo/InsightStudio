@@ -2,7 +2,7 @@ import Combine
 import Foundation
 
 @MainActor
-final class EditorWorkspaceViewModel {
+final class EditorWorkspaceViewModel: ObservableObject {
     @Published private(set) var clips: [ImportedClip] = []
 
     private let repository: ClipLibraryRepository
@@ -20,17 +20,34 @@ final class EditorWorkspaceViewModel {
         clips = repository.fetchRecentImports()
     }
 
-    func updateClip(_ clip: ImportedClip) {
-        repository.update(clip)
-        reload()
-    }
-
     private func bindSignals() {
         importSignalCenter.importedClip
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.reload()
+            .sink { [weak self] event in
+                guard let self else { return }
+                self.handle(event)
             }
             .store(in: &cancellables)
+    }
+    
+    private func handle(_ event: ImportedClipEvent) {
+        switch event {
+        case .inserted(let clip):
+            clips.insert(clip, at: 0)
+
+        case .progress(let id, let progress):
+            guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
+            clips[index].downloadProgress = progress
+            clips[index].downloadState = .downloading
+
+        case .updated(let clip):
+            guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+            clips[index] = clip
+
+        case .failed(let id, let message):
+            guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
+            clips[index].downloadState = .failed
+            clips[index].lastErrorMessage = message
+        }
     }
 }

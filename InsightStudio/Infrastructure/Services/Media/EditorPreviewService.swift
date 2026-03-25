@@ -10,12 +10,8 @@ protocol EditorPreviewService: AnyObject {
 }
 
 final class DefaultEditorPreviewService: EditorPreviewService {
-    let playerLayer = AVPlayerLayer()
-    var isPlaying: Bool { player.rate > 0 }
-    var onPlaybackTimeChange: ((Double) -> Void)?
-    var onPlaybackStateChange: ((Bool) -> Void)?
-
-    private let player = AVPlayer()
+    private let viewModel: ClipPlayerViewModel
+    
     private var lastDraftSignature: String?
     private var currentClipID: UUID?
     private var currentClipStart: Double = 0
@@ -24,17 +20,15 @@ final class DefaultEditorPreviewService: EditorPreviewService {
     private var desiredPlayback = false
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
-
-    init() {
-        playerLayer.player = player
-        playerLayer.videoGravity = .resizeAspect
-        player.automaticallyWaitsToMinimizeStalling = false
-
-        timeObserver = player.addPeriodicTimeObserver(
+    
+    init(viewModel: ClipPlayerViewModel) {
+        self.viewModel = viewModel
+        
+        timeObserver = viewModel.player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
-            guard let self, self.player.rate > 0 else { return }
+            guard let self, self.viewModel.player.rate > 0 else { return }
             let timelineTime = self.currentClipStart + max(0, time.seconds)
             self.onPlaybackTimeChange?(timelineTime)
         }
@@ -49,15 +43,38 @@ final class DefaultEditorPreviewService: EditorPreviewService {
                 await self.handlePlaybackEnd()
             }
         }
+        
+        self.viewModel.onItemDidPlayToEnd = { [weak self] in
+            guard let self else { return }
+            Task {
+                await self.handlePlaybackEnd()
+            }
+        }
     }
-
+    
     deinit {
         if let timeObserver {
-            player.removeTimeObserver(timeObserver)
+            viewModel.player.removeTimeObserver(timeObserver)
         }
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
         }
+    }
+    
+    var playerLayer: AVPlayerLayer {
+        viewModel.playerLayer
+    }
+    
+    var isPlaying: Bool { viewModel.player.rate > 0 }
+
+    var onPlaybackTimeChange: ((Double) -> Void)? {
+        get { viewModel.onPlaybackTimeChange }
+        set { viewModel.onPlaybackTimeChange = newValue }
+    }
+
+    var onPlaybackStateChange: ((Bool) -> Void)? {
+        get { viewModel.onPlaybackStateChange }
+        set { viewModel.onPlaybackStateChange = newValue }
     }
 
     func updatePreview(draft: EditorDraft, at timelineSeconds: Double, shouldPlay: Bool) async throws {
@@ -65,7 +82,9 @@ final class DefaultEditorPreviewService: EditorPreviewService {
         desiredPlayback = shouldPlay
 
         guard !draft.clips.isEmpty else {
-            await clearPlayer()
+            await MainActor.run {
+                clearPlayer()
+            }
             return
         }
 
@@ -82,8 +101,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
             lastDraftSignature = signature
 
             await MainActor.run {
-                self.player.pause()
-                self.player.replaceCurrentItem(with: item)
+                self.viewModel.replaceCurrentItem(with: item)
             }
 
             try await waitUntilReadyToPlay(item)
@@ -97,32 +115,27 @@ final class DefaultEditorPreviewService: EditorPreviewService {
 
         await MainActor.run {
             if shouldPlay {
-                self.player.playImmediately(atRate: 1.0)
+                self.viewModel.play()
             } else {
-                self.player.pause()
+                self.viewModel.pause()
             }
-            self.onPlaybackStateChange?(shouldPlay)
         }
     }
 
     @MainActor
     private func clearPlayer() {
-        player.pause()
-        player.replaceCurrentItem(with: nil)
+        viewModel.clear()
         currentClipID = nil
         currentClipStart = 0
         currentClipDuration = 0
         lastDraftSignature = nil
         desiredPlayback = false
-        onPlaybackStateChange?(false)
-        onPlaybackTimeChange?(0)
     }
 
     private func handlePlaybackEnd() async {
         guard desiredPlayback, let draft = latestDraft else {
             await MainActor.run {
-                self.player.pause()
-                self.onPlaybackStateChange?(false)
+                self.viewModel.pause()
             }
             return
         }
@@ -131,9 +144,8 @@ final class DefaultEditorPreviewService: EditorPreviewService {
         guard nextTimelineTime < draft.totalDuration - 0.001 else {
             desiredPlayback = false
             await MainActor.run {
-                self.player.pause()
-                self.onPlaybackTimeChange?(draft.totalDuration)
-                self.onPlaybackStateChange?(false)
+                self.viewModel.pause()
+                self.viewModel.onPlaybackTimeChange?(draft.totalDuration)
             }
             return
         }
@@ -183,7 +195,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
     private func seekPlayer(to time: CMTime) async throws {
         try await withCheckedThrowingContinuation { continuation in
             Task { @MainActor in
-                self.player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
+                self.viewModel.seek(to: time) { finished in
                     if finished {
                         continuation.resume()
                     } else {

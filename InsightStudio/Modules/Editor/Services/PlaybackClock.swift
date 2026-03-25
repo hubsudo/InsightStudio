@@ -5,8 +5,6 @@ final class PlaybackClock {
     private var timer: Timer?
     var onTick: ((Double) -> Void)?
 
-    init() {}
-
     func start(from initial: Double, duration: Double) {
         stop()
         var current = initial

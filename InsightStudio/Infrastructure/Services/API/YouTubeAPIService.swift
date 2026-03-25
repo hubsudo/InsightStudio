@@ -14,7 +14,7 @@ final class YouTubeAPIService {
 
         components.queryItems = [
             URLQueryItem(name: "part", value: "snippet"),
-            URLQueryItem(name: "maxResults", value: "15"),
+            URLQueryItem(name: "maxResults", value: "5"),
             URLQueryItem(name: "type", value: "video"),
             URLQueryItem(name: "q", value: keyword),
             URLQueryItem(name: "key", value: AppEnvironment.youtubeAPIKey)

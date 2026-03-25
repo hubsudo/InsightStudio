@@ -6,6 +6,7 @@ struct AppContext {
     let streamPlaybackService: StreamPlaybackService
     let imagePipeline: ImagePipeline
     let importSignalCenter: ImportSignalCenter
+    let clipDownloadService: ClipDownloadService
 
     static func make() -> AppContext {
         let imageCache = MemoryImageCache()
@@ -26,7 +27,8 @@ struct AppContext {
             clipLibraryRepository: clipLibraryRepository,
             streamPlaybackService: streamPlaybackService,
             imagePipeline: imagePipeline,
-            importSignalCenter: importSignalCenter
+            importSignalCenter: importSignalCenter,
+            clipDownloadService: ClipDownloadService(),
         )
     }
 }

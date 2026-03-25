@@ -9,10 +9,14 @@ struct EditorModuleAssembler {
             repository: context.clipLibraryRepository,
             importSignalCenter: context.importSignalCenter
         )
+        
+        let clipPlayerViewModel = ClipPlayerViewModel()
+        let previewService = DefaultEditorPreviewService(viewModel: clipPlayerViewModel)
+        
         let viewModel = EditorViewModel(
             initialDraft: initialDraft,
             layoutService: TimelineLayoutService(),
-            previewService: DefaultEditorPreviewService()
+            previewService: previewService
         )
         return EditorViewController(
             viewModel: viewModel,

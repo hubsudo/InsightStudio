@@ -3,8 +3,6 @@ import Foundation
 final class TimelineLayoutService: @unchecked Sendable {
     private let cacheActor = TimelineLayoutCacheActor()
 
-    init() {}
-
     func makeSnapshot(
         clips: [TimelineClipLayoutInput],
         key: TimelineLayoutKey

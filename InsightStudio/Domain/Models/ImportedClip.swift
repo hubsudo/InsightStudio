@@ -1,17 +1,28 @@
 import Foundation
 
+enum ImportedClipDownloadState: String, Codable, Hashable {
+    case idle
+    case downloading
+    case ready
+    case failed
+}
+
 struct ImportedClip: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     let sourceID: String
     let videoId: String
-    let title: String
-    let thumbnailURL: String
-    let remoteStreamURL: String
-    let localFileURL: URL // AVAsset
-    let durationSeconds: Double
+    var title: String
+    var thumbnailURL: String
+    var remoteStreamURL: String
+    var localFileURL: URL? // AVURLAsset
+    var durationSeconds: Double
     let importedAt: Date
     var selectedStartSeconds: Double
     var selectedEndSeconds: Double
+    
+    var downloadState: ImportedClipDownloadState
+    var downloadProgress: Double
+    var lastErrorMessage: String?
 
     init(
         id: UUID = UUID(),
@@ -20,11 +31,14 @@ struct ImportedClip: Codable, Hashable, Identifiable, Sendable {
         title: String,
         thumbnailURL: String,
         remoteStreamURL: String,
-        localFileURL: URL,
+        localFileURL: URL?,
         durationSeconds: Double,
         importedAt: Date = Date(),
-        selectedStartSeconds: Double = 0,
-        selectedEndSeconds: Double = 15
+        selectedStartSeconds: Double,
+        selectedEndSeconds: Double,
+        downloadState: ImportedClipDownloadState,
+        downloadProgress: Double,
+        lastErrorMessage: String? = nil
     ) {
         self.id = id
         self.sourceID = sourceID
@@ -37,5 +51,35 @@ struct ImportedClip: Codable, Hashable, Identifiable, Sendable {
         self.importedAt = importedAt
         self.selectedStartSeconds = selectedStartSeconds
         self.selectedEndSeconds = selectedEndSeconds
+        self.downloadState = downloadState
+        self.downloadProgress = downloadProgress
+        self.lastErrorMessage = lastErrorMessage
+    }
+}
+
+enum ClipPlaybackSource: Hashable {
+    case localFile(URL)
+    case remoteStream(URL)
+}
+
+extension ImportedClip {
+    var playbackSource: ClipPlaybackSource? {
+        if let localFileURL, FileManager.default.fileExists(atPath: localFileURL.path) {
+            return .localFile(localFileURL)
+        }
+        
+        guard let remoteURL = URL(string: remoteStreamURL) else { return nil }
+        return .remoteStream(remoteURL)
+    }
+    
+    var isPlayable: Bool {
+        playbackSource != nil
+    }
+
+    var prefersLocalPlayback: Bool {
+        if let localFileURL {
+            return FileManager.default.fileExists(atPath: localFileURL.path)
+        }
+        return false
     }
 }

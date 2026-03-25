@@ -44,6 +44,11 @@ final class VideoDetailViewController: UIViewController {
         setupUI()
         resolvePlayback()
     }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        detachPlayer()
+    }
 
     private func setupUI() {
         playerContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -84,6 +89,7 @@ final class VideoDetailViewController: UIViewController {
     }
 
     private func attachPlayer(urlString: String) {
+        detachPlayer()
         guard let player = PlayerFactory.makePlayer(urlString: urlString) else { return }
         let pvc = AVPlayerViewController()
         pvc.player = player
@@ -99,6 +105,20 @@ final class VideoDetailViewController: UIViewController {
         pvc.didMove(toParent: self)
         player.play()
         playerViewController = pvc
+    }
+    
+    private func detachPlayer() {
+        guard let pvc = playerViewController else { return }
+
+        pvc.player?.pause()
+        pvc.player?.replaceCurrentItem(with: nil)
+        pvc.player = nil
+
+        pvc.willMove(toParent: nil)
+        pvc.view.removeFromSuperview()
+        pvc.removeFromParent()
+
+        playerViewController = nil
     }
 
     @objc private func importClip() {
@@ -139,46 +159,86 @@ final class VideoDetailViewController: UIViewController {
                 userInfo: [NSLocalizedDescriptionKey: "无效的视频地址"]
             )
         }
+        
+        let estimatedDuration = Double(info.durationSeconds ?? 15)
+        let initialSelectedEnd = Double(min(info.durationSeconds ?? 15, 15))
 
-        let localURL = try await ClipDownloadService().downloadVideo(
-            from: remoteURL,
-            assetID: assetID
-        )
-
-        let asset = AVURLAsset(url: localURL)
-        let duration = try await asset.load(.duration)
-        let durationSeconds = duration.seconds
-
-        guard durationSeconds.isFinite, durationSeconds > 0 else {
-            throw NSError(
-                domain: "Import",
-                code: -3,
-                userInfo: [NSLocalizedDescriptionKey: "本地视频时长无效"]
-            )
-        }
-
-        let clip = ImportedClip(
+        var clip = ImportedClip(
             sourceID: assetID,
             videoId: video.videoId,
             title: video.title,
             thumbnailURL: video.thumbnailURL,
             remoteStreamURL: info.streamURL,
-            localFileURL: localURL,
-            durationSeconds: durationSeconds,
+            localFileURL: nil,
+            durationSeconds: estimatedDuration,
             selectedStartSeconds: 0,
-            selectedEndSeconds: Double(min(info.durationSeconds ?? 15, 15))
+            selectedEndSeconds: initialSelectedEnd,
+            downloadState: .downloading,
+            downloadProgress: 0,
+            lastErrorMessage: nil
         )
         context.clipLibraryRepository.save(clip)
-        context.importSignalCenter.importedClip.send(clip)
+        context.importSignalCenter.importedClip.send(.inserted(clip))
 
         await MainActor.run {
             let alert = UIAlertController(
-                title: "已导入",
-                message: "素材已加入 Editor 工作台",
+                title: "开始导入",
+                message: "素材已加入 Editor 工作台，正在后台下载",
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: "OK", style: .default))
             self.present(alert, animated: true)
+        }
+        
+        let dispatcher = await MainActor.run {
+            ClipImportEventDispatcher(
+                repository: context.clipLibraryRepository,
+                signalCenter: context.importSignalCenter
+            )
+        }
+        
+        do {
+            let clipID = clip.id
+            
+            let localURL = try await context.clipDownloadService.downloadVideo(from: remoteURL, assetID: assetID) { event in
+                switch event {
+                case .progress(let progress):
+                    Task { @MainActor in
+                        dispatcher.emitProgress(for: clipID, progress: progress)
+                    }
+                case .completed:
+                    break
+                }
+            }
+            
+            let asset = AVURLAsset(url: localURL)
+            let duration = try await asset.load(.duration)
+            let durationSeconds = duration.seconds
+            
+            guard durationSeconds.isFinite, durationSeconds > 0 else {
+                throw NSError(
+                    domain: "Import",
+                    code: -3,
+                    userInfo: [NSLocalizedDescriptionKey: "本地视频时长无效"]
+                )
+            }
+
+            context.clipLibraryRepository.markReady(
+                for: clip.id,
+                localFileURL: localURL,
+                durationSeconds: durationSeconds
+            )
+            
+            clip.localFileURL = localURL
+            clip.durationSeconds = durationSeconds
+            clip.downloadState = .ready
+            clip.downloadProgress = 1.0
+            clip.lastErrorMessage = nil
+            
+            context.importSignalCenter.importedClip.send(.updated(clip))
+        } catch {
+            dispatcher.emitFailure(for: clip.id, message: error.localizedDescription)
+            throw error
         }
     }
 }

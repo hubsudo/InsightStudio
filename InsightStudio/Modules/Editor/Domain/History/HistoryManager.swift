@@ -14,8 +14,6 @@ final class HistoryManager: @unchecked Sendable {
     private var undoStack: [CommandPair] = []
     private var redoStack: [CommandPair] = []
 
-    init() {}
-
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
