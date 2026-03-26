@@ -5,23 +5,33 @@ import Foundation
 final class EditorWorkspaceViewModel: ObservableObject {
     @Published private(set) var clips: [ImportedClip] = []
 
-    private let repository: ClipLibraryRepository
-    private let importSignalCenter: ImportSignalCenter
+    private let pipeline: ClipLibraryPipeline
     private var cancellables: Set<AnyCancellable> = []
 
-    init(repository: ClipLibraryRepository, importSignalCenter: ImportSignalCenter) {
-        self.repository = repository
-        self.importSignalCenter = importSignalCenter
+    /// ViewModel → Pipeline → Repository
+    init(pipeline: ClipLibraryPipeline) {
+        self.pipeline = pipeline
+        
+        /// 不能调换顺序
+        /// .restoreFromStorage 发出的 .restored() 有可能在订阅建立前就已经发出去了，导致首屏拿不到数据
         bindSignals()
         reload()
     }
 
     func reload() {
-        clips = repository.fetchRecentImports()
+        pipeline.send(.restoreFromStorage)
+    }
+    
+    func deleteClip(_ clip: ImportedClip) {
+        pipeline.send(.deleteRequested(clip))
+    }
+
+    func deleteAll() {
+        pipeline.send(.deleteAllRequested)
     }
 
     private func bindSignals() {
-        importSignalCenter.importedClip
+        pipeline.importedClip
             .receive(on: DispatchQueue.main)
             .sink { [weak self] event in
                 guard let self else { return }
@@ -35,19 +45,25 @@ final class EditorWorkspaceViewModel: ObservableObject {
         case .inserted(let clip):
             clips.insert(clip, at: 0)
 
-        case .progress(let id, let progress):
-            guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
-            clips[index].downloadProgress = progress
-            clips[index].downloadState = .downloading
-
         case .updated(let clip):
-            guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+            replaceClip(clip)
+            
+        case .deleted(let id):
+            clips.removeAll(where: {$0.id == id})
+            
+        case .deletedAll:
+            clips.removeAll()
+            
+        case .restored(let restoredClips):
+            clips = restoredClips
+        }
+    }
+    
+    private func replaceClip(_ clip: ImportedClip) {
+        if let index = clips.firstIndex(where: { $0.id == clip.id }) {
             clips[index] = clip
-
-        case .failed(let id, let message):
-            guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
-            clips[index].downloadState = .failed
-            clips[index].lastErrorMessage = message
+        } else {
+            clips.insert(clip, at: 0)
         }
     }
 }

@@ -2,6 +2,9 @@ import UIKit
 
 final class ImportedClipCell: UICollectionViewCell {
     static let reuseID = "ImportedClipCell"
+    
+    var onTapDelete: ((ImportedClip) -> Void)?
+    private var currentClip: ImportedClip?
 
     private let imageView: AsyncImageView = {
         let view = AsyncImageView()
@@ -22,21 +25,41 @@ final class ImportedClipCell: UICollectionViewCell {
     
     private let progressView = UIProgressView(progressViewStyle: .default)
     private let stateLabel = UILabel()
+    private let deleteButton = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.addSubview(imageView)
-        contentView.addSubview(titleLabel)
-        contentView.addSubview(progressView)
-        contentView.addSubview(stateLabel)
+        contentView.layer.cornerRadius = 12
+        contentView.layer.borderWidth = 1
+        contentView.layer.borderColor = UIColor.separator.cgColor
+        contentView.backgroundColor = .secondarySystemBackground
+
+        deleteButton.setImage(UIImage(systemName: "trash"), for: .normal)
+        deleteButton.addTarget(self, action: #selector(didTapDelete), for: .touchUpInside)
+
+        [imageView,
+         titleLabel,
+         progressView,
+         stateLabel,
+         deleteButton
+        ].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview($0)
+        }
+        
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
             imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             imageView.heightAnchor.constraint(equalToConstant: 100),
+            
+            deleteButton.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 8),
+            deleteButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            deleteButton.widthAnchor.constraint(equalToConstant: 28),
+            deleteButton.heightAnchor.constraint(equalToConstant: 28),
 
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
-            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            titleLabel.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -8),
             titleLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 6),
             
             progressView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
@@ -46,8 +69,11 @@ final class ImportedClipCell: UICollectionViewCell {
             stateLabel.topAnchor.constraint(equalTo: progressView.bottomAnchor, constant: 8),
             stateLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             stateLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            stateLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
+            stateLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8),
         ])
+        
+        stateLabel.font = .systemFont(ofSize: 13)
+        stateLabel.textColor = .secondaryLabel
     }
 
     required init?(coder: NSCoder) {
@@ -59,7 +85,7 @@ final class ImportedClipCell: UICollectionViewCell {
         imageView.setImage(urlString: clip.thumbnailURL, pipeline: pipeline)
         progressView.progress = Float(clip.downloadProgress)
         
-        switch clip.downloadState {
+        switch clip.resolvedDownloadState {
         case .idle:
             stateLabel.text = "等待下载"
             progressView.isHidden = false
@@ -72,6 +98,21 @@ final class ImportedClipCell: UICollectionViewCell {
         case .failed:
             stateLabel.text = clip.lastErrorMessage ?? "下载失败"
             progressView.isHidden = true
+        case .deleted:
+            stateLabel.text = "已删除"
+            progressView.isHidden = true
         }
+    }
+    
+    @objc
+    private func didTapDelete() {
+        guard let currentClip else { return }
+        onTapDelete?(currentClip)
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        currentClip = nil
+        onTapDelete = nil
     }
 }

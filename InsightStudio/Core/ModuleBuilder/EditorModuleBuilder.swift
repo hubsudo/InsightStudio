@@ -1,16 +1,28 @@
-import UIKit
+import Foundation
 
-@MainActor
-enum EditorModuleBuilder {
-    static func build(context: AppContext, coordinator: EditorCoordinator) -> UIViewController {
-        let viewModel = EditorWorkspaceViewModel(
-            repository: context.clipLibraryRepository,
-            importSignalCenter: context.importSignalCenter
+struct EditorModuleBuilder {
+    static func makeEditorViewController(
+        initialDraft: EditorDraft = EditorDraft(),
+        context: AppContext
+    ) -> EditorViewController {
+        let clipPlayerViewModel = ClipPlayerViewModel()
+        let previewService = DefaultEditorPreviewService(
+            viewModel: clipPlayerViewModel,
+            clipRepository: context.clipLibraryRepository,
         )
-        let vc = EditorWorkspaceViewController(viewModel: viewModel, imagePipeline: context.imagePipeline)
-        vc.onSelectClip = { clip in
-            coordinator.showClipEditor(clip: clip)
-        }
-        return vc
+        
+        let viewModel = EditorViewModel(
+            initialDraft: initialDraft,
+            layoutService: TimelineLayoutService(),
+            previewService: previewService
+        )
+        let workspaceViewModel = EditorWorkspaceViewModel(
+            pipeline: context.clipPipeline,
+        )
+        return EditorViewController(
+            viewModel: viewModel,
+            workspaceViewModel: workspaceViewModel,
+            context: context,
+        )
     }
 }

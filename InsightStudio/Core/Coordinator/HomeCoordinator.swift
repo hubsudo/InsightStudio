@@ -18,7 +18,7 @@ final class HomeCoordinator {
     func showDetail(video: VideoSummary) {
         let vc = VideoDetailViewController(
             video: video,
-            context: context
+            context: context,
         )
         navigationController.pushViewController(vc, animated: true)
     }

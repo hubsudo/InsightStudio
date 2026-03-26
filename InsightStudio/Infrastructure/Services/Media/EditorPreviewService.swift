@@ -11,6 +11,7 @@ protocol EditorPreviewService: AnyObject {
 
 final class DefaultEditorPreviewService: EditorPreviewService {
     private let viewModel: ClipPlayerViewModel
+    private let clipRepository: any ClipLibraryRepository
     
     private var lastDraftSignature: String?
     private var currentClipID: UUID?
@@ -21,8 +22,12 @@ final class DefaultEditorPreviewService: EditorPreviewService {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     
-    init(viewModel: ClipPlayerViewModel) {
+    init(
+        viewModel: ClipPlayerViewModel,
+        clipRepository: ClipLibraryRepository,
+    ) {
         self.viewModel = viewModel
+        self.clipRepository = clipRepository
         
         timeObserver = viewModel.player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600),
@@ -154,11 +159,19 @@ final class DefaultEditorPreviewService: EditorPreviewService {
     }
 
     private func buildPlayerItem(for clip: TimelineClip) throws -> AVPlayerItem {
-        guard let url = URL(string: clip.sourceURLString) else {
+        guard let importedClip = clipRepository.findClip(by: clip.importedClipID) else {
             throw NSError(
                 domain: "EditorPreview",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "无效的视频地址"]
+                userInfo: [NSLocalizedDescriptionKey: "未找到对应的素材记录"]
+            )
+        }
+        
+        guard let url = PlayerFactory.resolveURL(from: importedClip) else {
+            throw NSError(
+                domain: "EditorPreview",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "无有效资源地址"]
             )
         }
         return AVPlayerItem(url: url)
@@ -224,7 +237,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
 
     private static func signature(for draft: EditorDraft) -> String {
         draft.clips
-            .map { "\($0.id.uuidString)|\($0.sourceURLString)|\($0.duration)" }
+            .map { "\($0.id.uuidString)|\($0.sourceID)|\($0.duration)" }
             .joined(separator: "||")
     }
 }

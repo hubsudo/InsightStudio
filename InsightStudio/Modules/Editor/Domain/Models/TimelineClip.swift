@@ -1,24 +1,34 @@
 import Foundation
 
 struct TimelineClip: Hashable, Identifiable, Sendable {
+    /// 时间轴片段自身 ID：一个素材插两次，应该有两个不同的 timeline clip id
     let id: UUID
+    /// 对应素材库中的 ImportedClip.id
+    let importedClipID: UUID
+    /// 对应素材资源主键，可用于找本地文件
+    let sourceID: String
     var title: String
     
-    var localFileURL: URL?
-    var remoteStreamURL: String
+    /// 编辑态：源素材裁剪区间
+    var sourceStartSeconds: Double
+    var sourceEndSeconds: Double
     
     var duration: Double
 
     init(id: UUID = UUID(),
+         importedClipID: UUID,
+         sourceID: String,
          title: String,
-         localFileURL: URL?,
-         remoteStreamURL: String,
-         duration: Double
+         sourceStartSeconds: Double,
+         sourceEndSeconds: Double,
+         duration: Double,
     ) {
         self.id = id
+        self.importedClipID = importedClipID
+        self.sourceID = sourceID
         self.title = title
-        self.localFileURL = localFileURL
-        self.remoteStreamURL = remoteStreamURL
+        self.sourceStartSeconds = sourceStartSeconds
+        self.sourceEndSeconds = sourceEndSeconds
         self.duration = duration
     }
 }
@@ -31,28 +41,12 @@ extension TimelineClip {
         )
         
         self.init(
-            id: importedClip.id,
+            importedClipID: importedClip.id,
+            sourceID: importedClip.sourceID,
             title: importedClip.title,
-            localFileURL: importedClip.localFileURL,
-            remoteStreamURL: importedClip.remoteStreamURL,
+            sourceStartSeconds: importedClip.selectedStartSeconds,
+            sourceEndSeconds: importedClip.selectedEndSeconds,
             duration: selectedDuration
         )
-    }
-    var playbackURL: URL? {
-        if let localFileURL,
-           FileManager.default.fileExists(atPath: localFileURL.path) {
-            return localFileURL
-        }
-        
-        return URL(string: remoteStreamURL)
-    }
-
-    var sourceURLString: String {
-        playbackURL?.absoluteString ?? remoteStreamURL
-    }
-
-    var prefersLocalPlayback: Bool {
-        guard let localFileURL else { return false }
-        return FileManager.default.fileExists(atPath: localFileURL.path)
     }
 }

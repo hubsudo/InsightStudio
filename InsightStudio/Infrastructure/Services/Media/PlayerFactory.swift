@@ -8,17 +8,14 @@ struct PlayerFactory {
         return AVPlayer(url: url)
     }
     
-    static func makePlayerItem(from clip: ImportedClip) -> AVPlayerItem? {
-        guard let source = clip.playbackSource else { return nil }
-
-        switch source {
+    static func resolveURL(from importedClip: ImportedClip) -> URL? {
+        switch importedClip.playbackSource {
         case .localFile(let url):
-            let asset = AVURLAsset(url: url)
-            return AVPlayerItem(asset: asset)
-
+            return url
         case .remoteStream(let url):
-            let asset = AVURLAsset(url: url)
-            return AVPlayerItem(asset: asset)
+            return url
+        case .none:
+            return nil
         }
     }
 }

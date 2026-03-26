@@ -27,7 +27,10 @@ final class VideoDetailViewController: UIViewController {
     private var playerViewController: AVPlayerViewController?
     private var currentPlaybackInfo: StreamPlaybackInfo?
 
-    init(video: VideoSummary, context: AppContext) {
+    init(
+        video: VideoSummary,
+        context: AppContext,
+    ) {
         self.video = video
         self.context = context
         super.init(nibName: nil, bundle: nil)
@@ -177,8 +180,8 @@ final class VideoDetailViewController: UIViewController {
             downloadProgress: 0,
             lastErrorMessage: nil
         )
-        context.clipLibraryRepository.save(clip)
-        context.importSignalCenter.importedClip.send(.inserted(clip))
+        
+        context.clipPipeline.send(.importRequested(clip))
 
         await MainActor.run {
             let alert = UIAlertController(
@@ -190,22 +193,16 @@ final class VideoDetailViewController: UIViewController {
             self.present(alert, animated: true)
         }
         
-        let dispatcher = await MainActor.run {
-            ClipImportEventDispatcher(
-                repository: context.clipLibraryRepository,
-                signalCenter: context.importSignalCenter
-            )
-        }
-        
         do {
             let clipID = clip.id
             
             let localURL = try await context.clipDownloadService.downloadVideo(from: remoteURL, assetID: assetID) { event in
                 switch event {
                 case .progress(let progress):
-                    Task { @MainActor in
-                        dispatcher.emitProgress(for: clipID, progress: progress)
+                    Task { @MainActor [weak self] in
+                        self?.context.clipPipeline.send(.importProgress(id: clipID, progress: progress))
                     }
+                    
                 case .completed:
                     break
                 }
@@ -222,22 +219,15 @@ final class VideoDetailViewController: UIViewController {
                     userInfo: [NSLocalizedDescriptionKey: "本地视频时长无效"]
                 )
             }
-
-            context.clipLibraryRepository.markReady(
-                for: clip.id,
-                localFileURL: localURL,
-                durationSeconds: durationSeconds
+            context.clipPipeline.send(
+                .importCompleted(
+                    id: clipID,
+                    localURL: localURL,
+                    durationSeconds: durationSeconds,
+                )
             )
-            
-            clip.localFileURL = localURL
-            clip.durationSeconds = durationSeconds
-            clip.downloadState = .ready
-            clip.downloadProgress = 1.0
-            clip.lastErrorMessage = nil
-            
-            context.importSignalCenter.importedClip.send(.updated(clip))
         } catch {
-            dispatcher.emitFailure(for: clip.id, message: error.localizedDescription)
+            context.clipPipeline.send(.importFailed(id: clip.id, message: error.localizedDescription))
             throw error
         }
     }

@@ -5,6 +5,8 @@ enum ImportedClipDownloadState: String, Codable, Hashable {
     case downloading
     case ready
     case failed
+    // TODO: 标记“删除”状态
+    case deleted
 }
 
 struct ImportedClip: Codable, Hashable, Identifiable, Sendable {
@@ -15,6 +17,7 @@ struct ImportedClip: Codable, Hashable, Identifiable, Sendable {
     var thumbnailURL: String
     var remoteStreamURL: String
     var localFileURL: URL? // AVURLAsset
+    
     var durationSeconds: Double
     let importedAt: Date
     var selectedStartSeconds: Double
@@ -63,6 +66,16 @@ enum ClipPlaybackSource: Hashable {
 }
 
 extension ImportedClip {
+    var localFileExists: Bool {
+        guard let localFileURL else { return false }
+        return FileManager.default.fileExists(atPath: localFileURL.path)
+    }
+    
+    var resolvedDownloadState: ImportedClipDownloadState {
+        if localFileExists { return .ready }
+        return downloadState
+    }
+    
     var playbackSource: ClipPlaybackSource? {
         if let localFileURL, FileManager.default.fileExists(atPath: localFileURL.path) {
             return .localFile(localFileURL)
@@ -70,16 +83,5 @@ extension ImportedClip {
         
         guard let remoteURL = URL(string: remoteStreamURL) else { return nil }
         return .remoteStream(remoteURL)
-    }
-    
-    var isPlayable: Bool {
-        playbackSource != nil
-    }
-
-    var prefersLocalPlayback: Bool {
-        if let localFileURL {
-            return FileManager.default.fileExists(atPath: localFileURL.path)
-        }
-        return false
     }
 }

@@ -5,7 +5,7 @@ import Combine
 final class EditorViewController: UIViewController {
     private let viewModel: EditorViewModel
     private let workspaceViewModel: EditorWorkspaceViewModel
-    private let imagePipeline: any ImagePipeline
+    private let context: AppContext
 
     private let previewContainer = PreviewContainerView()
     private let timelineView = TimelineView()
@@ -22,11 +22,11 @@ final class EditorViewController: UIViewController {
     init(
         viewModel: EditorViewModel,
         workspaceViewModel: EditorWorkspaceViewModel,
-        imagePipeline: any ImagePipeline
+        context: AppContext,
     ) {
         self.viewModel = viewModel
         self.workspaceViewModel = workspaceViewModel
-        self.imagePipeline = imagePipeline
+        self.context = context
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -151,7 +151,10 @@ final class EditorViewController: UIViewController {
             return
         }
 
-        let picker = EditorWorkspaceViewController(viewModel: workspaceViewModel, imagePipeline: imagePipeline)
+        let picker = EditorWorkspaceViewController(
+            viewModel: workspaceViewModel,
+            context: context,
+        )
         picker.screenTitle = "追加远程素材"
         picker.clipFilter = { clip in
             !excludedIDs.contains(clip.id)

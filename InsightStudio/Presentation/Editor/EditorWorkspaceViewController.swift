@@ -7,7 +7,7 @@ final class EditorWorkspaceViewController: UIViewController {
     var screenTitle: String?
 
     private let viewModel: EditorWorkspaceViewModel
-    private let imagePipeline: ImagePipeline
+    private let context: AppContext
     private var cancellables: Set<AnyCancellable> = []
 
     private lazy var collectionView: UICollectionView = {
@@ -24,9 +24,12 @@ final class EditorWorkspaceViewController: UIViewController {
         return view
     }()
 
-    init(viewModel: EditorWorkspaceViewModel, imagePipeline: ImagePipeline) {
+    init(
+        viewModel: EditorWorkspaceViewModel,
+        context: AppContext,
+    ) {
         self.viewModel = viewModel
-        self.imagePipeline = imagePipeline
+        self.context = context
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -38,6 +41,14 @@ final class EditorWorkspaceViewController: UIViewController {
         super.viewDidLoad()
         title = screenTitle ?? "Editor"
         view.backgroundColor = .systemBackground
+        
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "trash"),
+            style: .plain,
+            target: self,
+            action: #selector(didTapDeleteAll)
+        )
+        
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
@@ -59,9 +70,27 @@ final class EditorWorkspaceViewController: UIViewController {
             clipFilter?(clip) ?? true
         }
     }
+    
+    @objc
+    private func didTapDeleteAll() {
+        guard viewModel.clips.isEmpty == false else { return }
+        let alert = UIAlertController(
+            title: "删除全部素材",
+            message: "此操作会清空素材库记录，是否继续？",
+            preferredStyle: .alert
+        )
+        
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "删除", style: .destructive, handler: { [weak self] _ in
+            guard let self else { return }
+            self.context.clipPipeline.send(.deleteAllRequested)
+        }))
+        
+        present(alert, animated: true)
+    }
 }
 
-extension EditorWorkspaceViewController: UICollectionViewDataSource, UICollectionViewDelegate {
+extension EditorWorkspaceViewController: UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         displayedClips.count
     }
@@ -70,11 +99,30 @@ extension EditorWorkspaceViewController: UICollectionViewDataSource, UICollectio
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ImportedClipCell.reuseID, for: indexPath) as? ImportedClipCell else {
             return UICollectionViewCell()
         }
-        cell.configure(with: displayedClips[indexPath.item], pipeline: imagePipeline)
+        cell.configure(with: displayedClips[indexPath.item], pipeline: context.imagePipeline)
+        cell.onTapDelete = { [weak self] clip in
+            guard let self else { return }
+            
+            let alert = UIAlertController(
+                title: "删除素材",
+                message: "确认删除这条素材吗？",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+            alert.addAction(UIAlertAction(title: "删除", style: .destructive) { _ in
+                self.context.clipPipeline.send(.deleteRequested(clip))
+            })
+            self.present(alert, animated: true)
+        }
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         onSelectClip?(displayedClips[indexPath.item])
     }
+    
+//    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+//        let width = collectionView.bounds.width - 24
+//        return CGSize(width: width, height: 92)
+//    }
 }

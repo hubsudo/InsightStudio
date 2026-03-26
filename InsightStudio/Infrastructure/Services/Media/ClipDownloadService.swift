@@ -9,7 +9,24 @@ import Foundation
 
 enum ClipDownloadEvent {
     case progress(Double)
-    case completed(URL)
+    case completed
+}
+
+enum ClipDownloadError: LocalizedError {
+    case cancelled
+    case invalidResponse
+    case moveFileFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            return "下载已取消"
+        case .invalidResponse:
+            return "下载失败"
+        case .moveFileFailed(let message):
+            return "文件落盘失败：\(message)"
+        }
+    }
 }
 
 protocol ClipDownloadServiceProtocol {
@@ -18,6 +35,8 @@ protocol ClipDownloadServiceProtocol {
         assetID: String,
         onEvent: @Sendable @escaping (ClipDownloadEvent) -> Void
     ) async throws -> URL
+    
+    func cancelDownload(for assetID: String)
 }
 
 final class ClipDownloadService: NSObject, ClipDownloadServiceProtocol {
@@ -35,6 +54,7 @@ final class ClipDownloadService: NSObject, ClipDownloadServiceProtocol {
     }()
     
     private var taskContexts: [Int: TaskContext] = [:]
+    private var assetIDToTaskID: [String: Int] = [:] // 资源id到任务id的映射，记录用于后续取消
     private let lock = NSLock()
     
     override init() {
@@ -47,9 +67,24 @@ final class ClipDownloadService: NSObject, ClipDownloadServiceProtocol {
             
             lock.lock()
             taskContexts[task.taskIdentifier] = TaskContext(assetID: assetID, continuation: continuation, onEvent: onEvent)
+            assetIDToTaskID[assetID] = task.taskIdentifier
             lock.unlock()
             
             task.resume()
+        }
+    }
+    
+    func cancelDownload(for assetID: String) {
+        lock.lock()
+        let taskID = assetIDToTaskID[assetID]
+        lock.unlock()
+
+        guard let taskID else { return }
+
+        session.getAllTasks { [weak self] tasks in
+            guard let self else { return }
+            guard let task = tasks.first(where: { $0.taskIdentifier == taskID }) else { return }
+            task.cancel()
         }
     }
     
@@ -86,14 +121,24 @@ extension ClipDownloadService: URLSessionDownloadDelegate {
             if fm.fileExists(atPath: destinationURL.path) {
                 try fm.removeItem(at: destinationURL)
             }
+            context.onEvent(.completed)
             try fm.moveItem(at: location, to: destinationURL)
         } catch {
-            context.continuation.resume(throwing: error)
+            context.continuation.resume(
+                throwing: ClipDownloadError.moveFileFailed(error.localizedDescription)
+            )
         }
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        guard let error, let context = removeContext(for: task) else { return }
-        context.continuation.resume(throwing: error)
+        guard let error else { return }
+        guard let context = removeContext(for: task) else { return }
+        
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+            context.continuation.resume(throwing: ClipDownloadError.cancelled)
+        } else {
+            context.continuation.resume(throwing: error)
+        }
     }
 }
