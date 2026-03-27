@@ -16,11 +16,13 @@ final class DefaultEditorPreviewService: EditorPreviewService {
     private var lastDraftSignature: String?
     private var currentClipID: UUID?
     private var currentClipStart: Double = 0
+    private var currentClipSourceStart: Double = 0
     private var currentClipDuration: Double = 0
     private var latestDraft: EditorDraft?
     private var desiredPlayback = false
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var isHandlingPlaybackEnd = false
     
     init(
         viewModel: ClipPlayerViewModel,
@@ -34,8 +36,14 @@ final class DefaultEditorPreviewService: EditorPreviewService {
             queue: .main
         ) { [weak self] time in
             guard let self, self.viewModel.player.rate > 0 else { return }
-            let timelineTime = self.currentClipStart + max(0, time.seconds)
+            let clipSeconds = max(0, time.seconds - self.currentClipSourceStart)
+            let timelineTime = self.currentClipStart + min(clipSeconds, self.currentClipDuration)
             self.onPlaybackTimeChange?(timelineTime)
+            if clipSeconds >= self.currentClipDuration - 0.01 {
+                Task {
+                    await self.handlePlaybackEnd()
+                }
+            }
         }
 
         endObserver = NotificationCenter.default.addObserver(
@@ -102,6 +110,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
             let item = try buildPlayerItem(for: segment.clip)
             currentClipID = segment.clip.id
             currentClipStart = segment.startTime
+            currentClipSourceStart = segment.clip.sourceStartSeconds
             currentClipDuration = segment.clip.duration
             lastDraftSignature = signature
 
@@ -112,11 +121,13 @@ final class DefaultEditorPreviewService: EditorPreviewService {
             try await waitUntilReadyToPlay(item)
         } else {
             currentClipStart = segment.startTime
+            currentClipSourceStart = segment.clip.sourceStartSeconds
             currentClipDuration = segment.clip.duration
         }
 
         let clipSeconds = min(max(clampedTimelineSeconds - segment.startTime, 0), segment.clip.duration)
-        try await seekPlayer(to: CMTime(seconds: clipSeconds, preferredTimescale: 600))
+        let sourceSeconds = segment.clip.sourceStartSeconds + clipSeconds
+        try await seekPlayer(to: CMTime(seconds: sourceSeconds, preferredTimescale: 600))
 
         await MainActor.run {
             if shouldPlay {
@@ -132,26 +143,29 @@ final class DefaultEditorPreviewService: EditorPreviewService {
         viewModel.clear()
         currentClipID = nil
         currentClipStart = 0
+        currentClipSourceStart = 0
         currentClipDuration = 0
         lastDraftSignature = nil
         desiredPlayback = false
+        isHandlingPlaybackEnd = false
     }
 
+    @MainActor
     private func handlePlaybackEnd() async {
+        guard !isHandlingPlaybackEnd else { return }
+        isHandlingPlaybackEnd = true
+        defer { isHandlingPlaybackEnd = false }
+
         guard desiredPlayback, let draft = latestDraft else {
-            await MainActor.run {
-                self.viewModel.pause()
-            }
+            viewModel.pause()
             return
         }
 
         let nextTimelineTime = currentClipStart + currentClipDuration
         guard nextTimelineTime < draft.totalDuration - 0.001 else {
             desiredPlayback = false
-            await MainActor.run {
-                self.viewModel.pause()
-                self.viewModel.onPlaybackTimeChange?(draft.totalDuration)
-            }
+            viewModel.pause()
+            viewModel.onPlaybackTimeChange?(draft.totalDuration)
             return
         }
 
@@ -237,7 +251,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
 
     private static func signature(for draft: EditorDraft) -> String {
         draft.clips
-            .map { "\($0.id.uuidString)|\($0.sourceID)|\($0.duration)" }
+            .map { "\($0.id.uuidString)|\($0.sourceID)|\($0.sourceStartSeconds)|\($0.sourceEndSeconds)|\($0.duration)" }
             .joined(separator: "||")
     }
 }

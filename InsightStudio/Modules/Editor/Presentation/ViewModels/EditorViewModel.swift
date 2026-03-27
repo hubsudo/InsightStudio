@@ -97,8 +97,14 @@ final class EditorViewModel: ObservableObject {
         store.redo()
     }
 
-    func movePlayhead(to seconds: Double, recordHistory: Bool = false) {
-        let snapped = TimelineSnapService.nearestTime(to: seconds, in: currentState.draft)
+    func movePlayhead(
+        to seconds: Double,
+        recordHistory: Bool = false,
+        snapsToCandidates: Bool = true
+    ) {
+        let snapped = snapsToCandidates
+            ? TimelineSnapService.nearestTime(to: seconds, in: currentState.draft)
+            : seconds
         if recordHistory {
             store.perform(SetPlayheadCommand(seconds: snapped))
         } else {
@@ -112,6 +118,22 @@ final class EditorViewModel: ObservableObject {
             )
         }
         refreshPreview(shouldPlay: false)
+    }
+
+    func setTrimRange(start: Double, end: Double, recordHistory: Bool) {
+        if recordHistory {
+            store.perform(SetTrimRangeCommand(startSeconds: start, endSeconds: end))
+            return
+        }
+
+        var draft = currentState.draft
+        draft.setTrimRange(start: start, end: end)
+        currentState = EditorState(
+            draft: draft,
+            playbackUIState: currentState.playbackUIState,
+            canUndo: currentState.canUndo,
+            canRedo: currentState.canRedo
+        )
     }
 
     func togglePlayback() {
@@ -130,8 +152,8 @@ final class EditorViewModel: ObservableObject {
         let newPPS = min(max(oldPPS * Double(scaleDelta), 24), 240)
         guard abs(newPPS - oldPPS) > 0.25 else { return currentContentOffsetX }
 
-        let insetLeft = timelineInsets.left
-        let timeAtAnchor = max(0, (Double(currentContentOffsetX + anchorX) - insetLeft) / oldPPS)
+        let currentContentStartX = contentStartX(visibleWidth: visibleWidth, pixelsPerSecond: oldPPS)
+        let timeAtAnchor = max(0, (Double(currentContentOffsetX + anchorX) - Double(currentContentStartX)) / oldPPS)
 
         var draft = currentState.draft
         draft.zoomPixelsPerSecond = newPPS
@@ -144,13 +166,54 @@ final class EditorViewModel: ObservableObject {
         dirtyState.markAllDirty()
         scheduleRelayout(reason: .zoomChanged)
 
-        let newOffset = CGFloat(timeAtAnchor * newPPS + insetLeft) - anchorX
-        let maxOffset = max(0, CGFloat(draft.totalDuration * newPPS + insetLeft + timelineInsets.right) - visibleWidth)
-        return min(max(newOffset, 0), maxOffset)
+        let newContentStartX = contentStartX(visibleWidth: visibleWidth, pixelsPerSecond: newPPS)
+        let newOffset = CGFloat(timeAtAnchor * newPPS) + newContentStartX - anchorX
+        return clampedContentOffsetX(newOffset, visibleWidth: visibleWidth, pixelsPerSecond: newPPS)
     }
 
-    var playheadX: CGFloat {
-        CGFloat(currentState.draft.playheadSeconds * currentState.draft.zoomPixelsPerSecond + timelineInsets.left)
+    func leadingViewportPadding(visibleWidth: CGFloat) -> CGFloat {
+        max((visibleWidth / 2) - CGFloat(timelineInsets.left), 0)
+    }
+
+    func trailingViewportPadding(visibleWidth: CGFloat) -> CGFloat {
+        max((visibleWidth / 2) - CGFloat(timelineInsets.right), 0)
+    }
+
+    func contentStartX(visibleWidth: CGFloat, pixelsPerSecond: Double? = nil) -> CGFloat {
+        leadingViewportPadding(visibleWidth: visibleWidth) + CGFloat(timelineInsets.left)
+    }
+
+    func timelineContentWidth(visibleWidth: CGFloat, pixelsPerSecond: Double? = nil) -> CGFloat {
+        let pps = pixelsPerSecond ?? currentState.draft.zoomPixelsPerSecond
+        return CGFloat(
+            leadingViewportPadding(visibleWidth: visibleWidth)
+            + timelineInsets.left
+            + currentState.draft.totalDuration * pps
+            + timelineInsets.right
+            + trailingViewportPadding(visibleWidth: visibleWidth)
+        )
+    }
+
+    func playheadContentX(visibleWidth: CGFloat, pixelsPerSecond: Double? = nil) -> CGFloat {
+        let pps = pixelsPerSecond ?? currentState.draft.zoomPixelsPerSecond
+        return contentStartX(visibleWidth: visibleWidth, pixelsPerSecond: pps)
+            + CGFloat(currentState.draft.playheadSeconds * pps)
+    }
+
+    func clampedContentOffsetX(_ proposed: CGFloat, visibleWidth: CGFloat, pixelsPerSecond: Double? = nil) -> CGFloat {
+        let maxOffset = max(0, timelineContentWidth(visibleWidth: visibleWidth, pixelsPerSecond: pixelsPerSecond) - visibleWidth)
+        return min(max(proposed, 0), maxOffset)
+    }
+
+    func centeredContentOffsetX(visibleWidth: CGFloat) -> CGFloat {
+        clampedContentOffsetX(playheadContentX(visibleWidth: visibleWidth) - (visibleWidth / 2), visibleWidth: visibleWidth)
+    }
+
+    func playheadSeconds(forCenteredContentOffset contentOffsetX: CGFloat, visibleWidth: CGFloat) -> Double {
+        let clampedOffset = clampedContentOffsetX(contentOffsetX, visibleWidth: visibleWidth)
+        let centerTimelineX = Double(clampedOffset + (visibleWidth / 2))
+        let seconds = (centerTimelineX - Double(contentStartX(visibleWidth: visibleWidth))) / max(currentState.draft.zoomPixelsPerSecond, 1)
+        return min(max(seconds, 0), currentState.draft.totalDuration)
     }
 
     var timelineInsets: TimelineInsets {

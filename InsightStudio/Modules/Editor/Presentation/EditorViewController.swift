@@ -13,7 +13,6 @@ final class EditorViewController: UIViewController {
     private let undoButton = UIButton(type: .system)
     private let redoButton = UIButton(type: .system)
     private let playPauseButton = UIButton(type: .system)
-    private let playheadSlider = UISlider()
     private let summaryLabel = UILabel()
     private let previewSubtitleLabel = UILabel()
 
@@ -52,7 +51,6 @@ final class EditorViewController: UIViewController {
         addButton.addTarget(self, action: #selector(addTapped), for: .touchUpInside)
         undoButton.addTarget(self, action: #selector(undoTapped), for: .touchUpInside)
         redoButton.addTarget(self, action: #selector(redoTapped), for: .touchUpInside)
-        playheadSlider.addTarget(self, action: #selector(playheadChanged(_:)), for: .valueChanged)
         playPauseButton.addTarget(self, action: #selector(playPauseTapped), for: .touchUpInside)
 
         let buttonStack = UIStackView(arrangedSubviews: [addButton, undoButton, redoButton, playPauseButton])
@@ -68,7 +66,7 @@ final class EditorViewController: UIViewController {
         previewContainer.layer.cornerRadius = 12
         previewContainer.clipsToBounds = true
 
-        let stack = UIStackView(arrangedSubviews: [buttonStack, previewContainer, timelineView, playheadSlider, summaryLabel, previewSubtitleLabel])
+        let stack = UIStackView(arrangedSubviews: [buttonStack, previewContainer, timelineView, summaryLabel, previewSubtitleLabel])
         stack.axis = .vertical
         stack.spacing = 12
         view.addSubview(stack)
@@ -77,28 +75,49 @@ final class EditorViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             previewContainer.heightAnchor.constraint(equalTo: previewContainer.widthAnchor, multiplier: 9.0 / 16.0),
-            timelineView.heightAnchor.constraint(equalToConstant: 120),
+            timelineView.heightAnchor.constraint(equalToConstant: 128),
             stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
         ])
 
-        timelineView.collectionView.dataSource = self
-        timelineView.collectionView.delegate = self
-        timelineView.onPinchScaleChanged = { [weak self] scale, location, _ in
+        timelineView.onPinchScaleChanged = { [weak self] scale, _, _ in
             guard let self else { return }
+            let visibleWidth = self.timelineView.bounds.width
+            guard visibleWidth > 0 else { return }
             let newOffset = self.viewModel.anchoredZoom(
                 scaleDelta: scale,
-                anchorX: location.x,
-                visibleWidth: self.timelineView.scrollView.bounds.width,
-                currentContentOffsetX: self.timelineView.scrollView.contentOffset.x
+                anchorX: visibleWidth / 2,
+                visibleWidth: visibleWidth,
+                currentContentOffsetX: self.timelineView.contentOffsetX
             )
-            self.timelineView.scrollView.setContentOffset(CGPoint(x: newOffset, y: 0), animated: false)
+            self.timelineView.setContentOffsetX(newOffset)
         }
-        timelineView.onScrolled = { [weak self] _ in
+        timelineView.onScrubOffsetChanged = { [weak self] contentOffsetX, state in
             guard let self else { return }
-            self.timelineView.updatePlayheadX(self.viewModel.playheadX)
+            let visibleWidth = self.timelineView.bounds.width
+            guard visibleWidth > 0 else { return }
+            let playhead = self.viewModel.playheadSeconds(
+                forCenteredContentOffset: contentOffsetX,
+                visibleWidth: visibleWidth
+            )
+            let shouldSnap = state == .ended
+            self.viewModel.movePlayhead(to: playhead, snapsToCandidates: shouldSnap)
+        }
+        timelineView.onTrimRangeChanged = { [weak self] range, handle, state in
+            guard let self else { return }
+            switch state {
+            case .began, .changed:
+                self.viewModel.setTrimRange(start: range.lowerBound, end: range.upperBound, recordHistory: false)
+            case .ended:
+                let snapped = self.snapTrimRangeToPlayhead(range: range, handle: handle)
+                self.viewModel.setTrimRange(start: snapped.lowerBound, end: snapped.upperBound, recordHistory: true)
+            case .cancelled, .failed:
+                self.viewModel.setTrimRange(start: range.lowerBound, end: range.upperBound, recordHistory: false)
+            default:
+                break
+            }
         }
     }
 
@@ -109,35 +128,67 @@ final class EditorViewController: UIViewController {
                 guard let self else { return }
                 self.undoButton.isEnabled = state.canUndo
                 self.redoButton.isEnabled = state.canRedo
-                self.playheadSlider.minimumValue = 0
-                self.playheadSlider.maximumValue = Float(max(state.draft.totalDuration, 0.1))
-                self.playheadSlider.value = Float(state.draft.playheadSeconds)
                 self.playPauseButton.setTitle(state.playbackUIState == .playing ? "Pause" : "Play", for: .normal)
-                self.summaryLabel.text = "clips: \(state.draft.clips.count) | total: \(String(format: "%.2f", state.draft.totalDuration))s | playhead: \(String(format: "%.2f", state.draft.playheadSeconds))s"
+                self.summaryLabel.text = "clips: \(state.draft.clips.count) | total: \(String(format: "%.2f", state.draft.totalDuration))s | playhead: \(String(format: "%.2f", state.draft.playheadSeconds))s | trim: \(String(format: "%.2f", state.draft.trimStartSeconds))-\(String(format: "%.2f", state.draft.trimEndSeconds))s"
                 self.previewSubtitleLabel.text = "zoom: \(Int(state.draft.zoomPixelsPerSecond)) px/s | playback: \(state.playbackUIState)"
-                self.timelineView.rulerView.pixelsPerSecond = state.draft.zoomPixelsPerSecond
-                self.timelineView.rulerView.totalDuration = state.draft.totalDuration
-                self.timelineView.rulerView.leftInset = CGFloat(self.viewModel.timelineInsets.left)
-                self.timelineView.updatePlayheadX(self.viewModel.playheadX)
+                self.timelineView.pixelsPerSecond = state.draft.zoomPixelsPerSecond
+                self.timelineView.totalDuration = state.draft.totalDuration
+                self.timelineView.leftInset = CGFloat(self.viewModel.timelineInsets.left)
+                self.timelineView.trimRange = state.draft.trimRange
+                self.syncTimelineToPlayheadIfPossible()
             }
             .store(in: &cancellables)
+    }
 
-        viewModel.$timelineSnapshot
-            .receive(on: RunLoop.main)
-            .sink { [weak self] snapshot in
-                guard let self, let snapshot else { return }
-                self.timelineView.scrollView.contentSize = CGSize(width: CGFloat(snapshot.contentWidth), height: self.timelineView.scrollView.bounds.height)
-                self.timelineView.collectionView.frame = CGRect(x: 0, y: 0, width: CGFloat(snapshot.contentWidth), height: self.timelineView.scrollView.bounds.height)
-                self.timelineView.collectionView.reloadData()
-                self.timelineView.updatePlayheadX(self.viewModel.playheadX)
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        syncTimelineToPlayheadIfPossible()
+    }
+
+    private func syncTimelineToPlayheadIfPossible() {
+        let visibleWidth = timelineView.bounds.width
+        guard visibleWidth > 0 else { return }
+        timelineView.leadingPadding = viewModel.leadingViewportPadding(visibleWidth: visibleWidth)
+        timelineView.contentWidth = viewModel.timelineContentWidth(visibleWidth: visibleWidth)
+        let offset = viewModel.centeredContentOffsetX(visibleWidth: visibleWidth)
+        timelineView.setContentOffsetX(offset)
+    }
+
+    private func snapTrimRangeToPlayhead(
+        range: ClosedRange<Double>,
+        handle: TimelineTrimHandle
+    ) -> ClosedRange<Double> {
+        let total = viewModel.currentState.draft.totalDuration
+        guard total > 0 else { return 0...0 }
+
+        let playhead = viewModel.currentState.draft.playheadSeconds
+        let minimumDuration = min(0.1, total)
+        var start = range.lowerBound
+        var end = range.upperBound
+
+        switch handle {
+        case .left:
+            start = playhead
+            if end - start < minimumDuration {
+                end = min(total, start + minimumDuration)
+                start = max(0, end - minimumDuration)
             }
-            .store(in: &cancellables)
+        case .right:
+            end = playhead
+            if end - start < minimumDuration {
+                start = max(0, end - minimumDuration)
+                end = min(total, start + minimumDuration)
+            }
+        }
+
+        start = min(max(start, 0), max(0, total - minimumDuration))
+        end = min(max(end, start + minimumDuration), total)
+        return start...end
     }
 
     @objc private func addTapped() { presentRemoteClipPicker() }
     @objc private func undoTapped() { viewModel.undo() }
     @objc private func redoTapped() { viewModel.redo() }
-    @objc private func playheadChanged(_ sender: UISlider) { viewModel.movePlayhead(to: Double(sender.value)) }
     @objc private func playPauseTapped() { viewModel.togglePlayback() }
 
     private func presentRemoteClipPicker() {
@@ -179,32 +230,5 @@ final class EditorViewController: UIViewController {
 
     @objc private func dismissPresentedPicker() {
         dismiss(animated: true)
-    }
-}
-
-extension EditorViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        viewModel.timelineSnapshot?.items.count ?? 0
-    }
-
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        guard
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: TimelineClipCell.reuseIdentifier, for: indexPath) as? TimelineClipCell,
-            let item = viewModel.timelineSnapshot?.items[indexPath.item]
-        else {
-            return UICollectionViewCell()
-        }
-        cell.configure(title: item.title)
-        return cell
-    }
-
-    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        guard let item = viewModel.timelineSnapshot?.items[indexPath.item] else { return .zero }
-        return CGSize(width: CGFloat(item.rect.width), height: CGFloat(item.rect.height))
-    }
-
-    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, insetForSectionAt section: Int) -> UIEdgeInsets {
-        let inset = viewModel.timelineInsets
-        return UIEdgeInsets(top: CGFloat(inset.top), left: CGFloat(inset.left), bottom: CGFloat(inset.bottom), right: CGFloat(inset.right))
     }
 }

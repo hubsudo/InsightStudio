@@ -164,9 +164,9 @@ final class VideoDetailViewController: UIViewController {
         }
         
         let estimatedDuration = Double(info.durationSeconds ?? 15)
-        let initialSelectedEnd = Double(min(info.durationSeconds ?? 15, 15))
+        let initialSelectedEnd = estimatedDuration
 
-        var clip = ImportedClip(
+        let clip = ImportedClip(
             sourceID: assetID,
             videoId: video.videoId,
             title: video.title,

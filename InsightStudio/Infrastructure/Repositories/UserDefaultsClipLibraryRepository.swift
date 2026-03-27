@@ -133,7 +133,7 @@ final class UserDefaultsClipLibraryRepository: ClipLibraryRepository {
                 localFileURL: fileURL,
                 durationSeconds: safeDuration,
                 selectedStartSeconds: 0,
-                selectedEndSeconds: min(safeDuration, 15),
+                selectedEndSeconds: safeDuration,
                 downloadState: .ready,
                 downloadProgress: 1.0,
                 lastErrorMessage: nil

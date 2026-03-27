@@ -4,12 +4,23 @@ final class TimelineRulerView: UIView {
     var pixelsPerSecond: Double = 56 { didSet { setNeedsDisplay() } }
     var totalDuration: Double = 0 { didSet { setNeedsDisplay() } }
     var leftInset: CGFloat = 16 { didSet { setNeedsDisplay() } }
+    var leadingPadding: CGFloat = 0 { didSet { setNeedsDisplay() } }
+    var contentOffsetX: CGFloat = 0 { didSet { setNeedsDisplay() } }
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         ctx.clear(rect)
         UIColor.secondarySystemBackground.setFill()
         ctx.fill(rect)
+
+        let safePixelsPerSecond = max(pixelsPerSecond, 1)
+        let maxSecond = max(0, Int(ceil(totalDuration)))
+        let contentStartX = Double(leadingPadding + leftInset)
+        let visibleStart = max(0, (Double(contentOffsetX) - contentStartX) / safePixelsPerSecond)
+        let visibleEnd = max(0, (Double(contentOffsetX + rect.width) - contentStartX) / safePixelsPerSecond)
+        let startSecond = max(0, Int(floor(visibleStart)) - 1)
+        let endSecond = min(maxSecond, Int(ceil(visibleEnd)) + 1)
+        guard startSecond <= endSecond else { return }
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
@@ -19,9 +30,8 @@ final class TimelineRulerView: UIView {
             .paragraphStyle: paragraph
         ]
 
-        let maxSecond = Int(ceil(totalDuration))
-        for second in 0...maxSecond {
-            let x = leftInset + CGFloat(Double(second) * pixelsPerSecond)
+        for second in startSecond...endSecond {
+            let x = leadingPadding + leftInset + CGFloat(Double(second) * safePixelsPerSecond) - contentOffsetX
             let tickHeight: CGFloat = second % 5 == 0 ? 16 : 10
             ctx.setStrokeColor(UIColor.tertiaryLabel.cgColor)
             ctx.setLineWidth(1)

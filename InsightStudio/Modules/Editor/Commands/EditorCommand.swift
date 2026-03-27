@@ -42,10 +42,15 @@ struct AppendClipCommand: EditorCommand {
     }
 
     func apply(to draft: inout EditorDraft) {
+        let oldTotal = draft.totalDuration
         draft.clips.append(clip)
         if snapToEnd {
             draft.playheadSeconds = draft.totalDuration
         }
+        if abs(draft.trimEndSeconds - oldTotal) < 0.001 {
+            draft.trimEndSeconds = draft.totalDuration
+        }
+        draft.normalizeTimelineRanges()
     }
 
     func makeInverse(from oldDraft: EditorDraft) -> any EditorCommand {
@@ -63,6 +68,25 @@ struct SetPlayheadCommand: EditorCommand {
 
     func apply(to draft: inout EditorDraft) {
         draft.playheadSeconds = max(0, min(seconds, draft.totalDuration))
+    }
+
+    func makeInverse(from oldDraft: EditorDraft) -> any EditorCommand {
+        RestoreDraftCommand(snapshot: oldDraft, description: description)
+    }
+}
+
+struct SetTrimRangeCommand: EditorCommand {
+    let startSeconds: Double
+    let endSeconds: Double
+    var description: String { "Trim Timeline Range" }
+
+    init(startSeconds: Double, endSeconds: Double) {
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+    }
+
+    func apply(to draft: inout EditorDraft) {
+        draft.setTrimRange(start: startSeconds, end: endSeconds)
     }
 
     func makeInverse(from oldDraft: EditorDraft) -> any EditorCommand {
