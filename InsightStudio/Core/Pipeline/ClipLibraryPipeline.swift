@@ -7,36 +7,31 @@
 
 import Foundation
 import Combine
+import AVFoundation
 
 /// 素材库所有操作
-enum ClipLibraryAction {
+enum ClipLibraryAction: Sendable {
+    /// 外部 action
     case importRequested(ImportedClip)
+    case deleteRequested(ImportedClip)
+    case deleteAllRequested
+    case restoreFromStorage
+    
+    /// 状态机闭环关键
+    /// 内部action（effect 回来后再次派发）
+    case restoreResponse([ImportedClip])
     case importProgress(id: UUID, progress: Double)
     case importCompleted(id: UUID, localURL: URL, durationSeconds: Double)
     case importFailed(id: UUID, message: String)
-
-    case deleteRequested(ImportedClip)
-    case deleteAllRequested
-
-    case restoreFromStorage
 }
 
-/// 对外统一发素材库操作对应的响应事件
-enum ImportedClipEvent {
-    case inserted(ImportedClip)
-    case updated(ImportedClip)
-    
-    case deleted(id: UUID)
-    case deletedAll
-    
-    case restored([ImportedClip])
-}
-
+/// 状态机 调度器
 @MainActor
-final class ClipLibraryPipeline {
+final class ClipLibraryPipeline: ObservableObject {
+    @Published private(set) var state = ClipLibraryState()
+    
     private let repository: any ClipLibraryRepository
     private let downloadService: any ClipDownloadServiceProtocol
-    let importedClip = PassthroughSubject<ImportedClipEvent, Never>()
 
     init(
         repository: any ClipLibraryRepository,
@@ -47,73 +42,121 @@ final class ClipLibraryPipeline {
     }
 
     func send(_ action: ClipLibraryAction) {
-        switch action {
-        case .importRequested(let clip):
-            repository.save(clip)
-            importedClip.send(.inserted(clip))
+        let result = ClipLibraryReducer.reduce(state: state, action: action)
+        
+        apply(result.mutations)
+        run(result.effects)
+    }
+    
+    private func apply(_ mutations: [ClipLibraryMutation]) {
+        for mutation in mutations {
+            state.apply(mutation)
+        }
+    }
+    
+    private func run(_ effects: [ClipLibraryEffect]) {
+        for effect in effects {
+            run(effect)
+        }
+    }
 
-        case .importProgress(let id, let progress):
-            //先判断 clip 还在不在，避免 cancel 之后可能还有极短窗口收到一次 delegate progress 回调
-            guard var clip = repository.findClip(by: id) else { return }
-            repository.updateProgress(for: id, progress: progress)
-            
-            clip.downloadProgress = progress
-            clip.downloadState = .downloading
-            
-//            importedClip.send(.progress(id: id, progress: progress))
-            importedClip.send(.updated(clip))
-
-        case .importCompleted(let id, let localURL, let durationSeconds):
-            guard var clip = repository.findClip(by: id) else { return }
-            repository.markReady(for: id, localFileURL: localURL, durationSeconds: durationSeconds)
-
-            clip.localFileURL = localURL
-            clip.durationSeconds = durationSeconds
-            clip.downloadState = .ready
-            clip.downloadProgress = 1.0
-            clip.lastErrorMessage = nil
-
-            importedClip.send(.updated(clip))
-
-        case .importFailed(let id, let message):
-            guard var clip = repository.findClip(by: id) else { return }
-            repository.markFailed(for: id, message: message)
-            
-            clip.downloadState = .failed
-            clip.lastErrorMessage = message
-            
-//            importedClip.send(.failed(id: id, message: message))
-            importedClip.send(.updated(clip))
-
-        case .deleteRequested(let clip):
-            if clip.downloadState == .downloading {
-                downloadService.cancelDownload(for: clip.sourceID)
-            }
-            repository.deleteClip(by: clip.id)
-            importedClip.send(.deleted(id: clip.id))
-
-        case .deleteAllRequested:
-            let clips = repository.fetchRecentImports()
-            for clip in clips where clip.downloadState == .downloading {
-                downloadService.cancelDownload(for: clip.sourceID)
-            }
-            repository.deleteAllClips()
-            importedClip.send(.deletedAll)
+    private func run(_ effect: ClipLibraryEffect) {
+        switch effect {
+        case .none:
+            break
 
         case .restoreFromStorage:
             Task { [weak self] in
                 guard let self else { return }
-//                let restored = await self.repository.reconcileLocalFiles()
-//                await self.finishRestore(restored)
+                /// 做较重的磁盘 I/O
                 let restored = await self.repository.reconcileLocalFiles()
-                await MainActor.run {
-                    self.importedClip.send(.restored(restored))
+                self.send(.restoreResponse(restored))
+            }
+
+        case .startImport(let clip):
+            startImportEffect(clip)
+
+        case .deleteClip(let clip):
+            deleteClipEffect(clip)
+
+        case .deleteAll:
+            deleteAllEffect()
+        }
+    }
+}
+
+@MainActor
+extension ClipLibraryPipeline {
+    private func startImportEffect(_ clip: ImportedClip) {
+        repository.save(clip)
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                guard let remoteURL = URL(string: clip.remoteStreamURL) else {
+                    await self.send(.importFailed(id: clip.id, message: "无效的视频地址"))
+                    return
                 }
+
+                let localURL = try await self.downloadService.downloadVideo(
+                    from: remoteURL,
+                    assetID: clip.sourceID
+                ) { [weak self] event in
+                    guard let self else { return }
+
+                    switch event {
+                    case .progress(let progress):
+                        Task { @MainActor [weak self] in
+                            self?.send(.importProgress(id: clip.id, progress: progress))
+                        }
+
+                    case .completed:
+                        break
+                    }
+                }
+
+                let asset = AVURLAsset(url: localURL)
+                let duration = try await asset.load(.duration)
+                let durationSeconds = CMTimeGetSeconds(duration)
+
+                self.repository.markReady(
+                    for: clip.id,
+                    localFileURL: localURL,
+                    durationSeconds: durationSeconds
+                )
+
+                await self.send(
+                    .importCompleted(
+                        id: clip.id,
+                        localURL: localURL,
+                        durationSeconds: durationSeconds
+                    )
+                )
+
+            } catch {
+                let message = (error as NSError).localizedDescription
+                self.repository.markFailed(for: clip.id, message: message)
+                await self.send(.importFailed(id: clip.id, message: message))
             }
         }
     }
     
-//    private func finishRestore(_ clips: [ImportedClip]) {
-//        importedClip.send(.restored(clips))
-//    }
+    private func deleteClipEffect(_ clip: ImportedClip) {
+        if clip.downloadState == .downloading {
+            downloadService.cancelDownload(for: clip.sourceID)
+        }
+
+        repository.deleteClip(by: clip.id)
+    }
+    
+    private func deleteAllEffect() {
+        let clips = repository.fetchRecentImports()
+
+        for clip in clips where clip.downloadState == .downloading {
+            downloadService.cancelDownload(for: clip.sourceID)
+        }
+
+        repository.deleteAllClips()
+    }
 }

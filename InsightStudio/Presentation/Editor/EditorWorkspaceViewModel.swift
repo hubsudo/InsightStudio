@@ -4,6 +4,9 @@ import Foundation
 @MainActor
 final class EditorWorkspaceViewModel: ObservableObject {
     @Published private(set) var clips: [ImportedClip] = []
+    @Published private(set) var isRestoring: Bool = false
+    @Published private(set) var isDeletingAll: Bool = false
+    @Published private(set) var errorMessage: String?
 
     private let pipeline: ClipLibraryPipeline
     private var cancellables: Set<AnyCancellable> = []
@@ -14,7 +17,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
         
         /// 不能调换顺序
         /// .restoreFromStorage 发出的 .restored() 有可能在订阅建立前就已经发出去了，导致首屏拿不到数据
-        bindSignals()
+        bindState()
         reload()
     }
 
@@ -30,40 +33,15 @@ final class EditorWorkspaceViewModel: ObservableObject {
         pipeline.send(.deleteAllRequested)
     }
 
-    private func bindSignals() {
-        pipeline.importedClip
+    private func bindState() {
+        pipeline.$state
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] event in
-                guard let self else { return }
-                self.handle(event)
+            .sink { [weak self] state in
+                self?.clips = state.clips
+                self?.isRestoring = state.isRestoring
+                self?.isDeletingAll = state.isDeletingAll
+                self?.errorMessage = state.lastErrorMessage
             }
             .store(in: &cancellables)
-    }
-    
-    private func handle(_ event: ImportedClipEvent) {
-        switch event {
-        case .inserted(let clip):
-            clips.insert(clip, at: 0)
-
-        case .updated(let clip):
-            replaceClip(clip)
-            
-        case .deleted(let id):
-            clips.removeAll(where: {$0.id == id})
-            
-        case .deletedAll:
-            clips.removeAll()
-            
-        case .restored(let restoredClips):
-            clips = restoredClips
-        }
-    }
-    
-    private func replaceClip(_ clip: ImportedClip) {
-        if let index = clips.firstIndex(where: { $0.id == clip.id }) {
-            clips[index] = clip
-        } else {
-            clips.insert(clip, at: 0)
-        }
     }
 }

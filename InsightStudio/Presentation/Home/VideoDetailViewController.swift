@@ -144,23 +144,18 @@ final class VideoDetailViewController: UIViewController {
         }
     }
     
+    @MainActor
     private func importClipAsync() async throws {
         guard let info = currentPlaybackInfo else {
-            throw NSError(
-                domain: "Import",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "缺少播放信息"]
-            )
+            presentImportError("缺少播放信息")
+            return
         }
 
         let assetID = UUID().uuidString
 
         guard let remoteURL = URL(string: info.streamURL) else {
-            throw NSError(
-                domain: "Import",
-                code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "无效的视频地址"]
-            )
+            presentImportError("无效的视频地址")
+            return
         }
         
         let estimatedDuration = Double(info.durationSeconds ?? 15)
@@ -183,52 +178,23 @@ final class VideoDetailViewController: UIViewController {
         
         context.clipPipeline.send(.importRequested(clip))
 
-        await MainActor.run {
-            let alert = UIAlertController(
-                title: "开始导入",
-                message: "素材已加入 Editor 工作台，正在后台下载",
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
-            self.present(alert, animated: true)
-        }
-        
-        do {
-            let clipID = clip.id
-            
-            let localURL = try await context.clipDownloadService.downloadVideo(from: remoteURL, assetID: assetID) { event in
-                switch event {
-                case .progress(let progress):
-                    Task { @MainActor [weak self] in
-                        self?.context.clipPipeline.send(.importProgress(id: clipID, progress: progress))
-                    }
-                    
-                case .completed:
-                    break
-                }
-            }
-            
-            let asset = AVURLAsset(url: localURL)
-            let duration = try await asset.load(.duration)
-            let durationSeconds = duration.seconds
-            
-            guard durationSeconds.isFinite, durationSeconds > 0 else {
-                throw NSError(
-                    domain: "Import",
-                    code: -3,
-                    userInfo: [NSLocalizedDescriptionKey: "本地视频时长无效"]
-                )
-            }
-            context.clipPipeline.send(
-                .importCompleted(
-                    id: clipID,
-                    localURL: localURL,
-                    durationSeconds: durationSeconds,
-                )
-            )
-        } catch {
-            context.clipPipeline.send(.importFailed(id: clip.id, message: error.localizedDescription))
-            throw error
-        }
+        let alert = UIAlertController(
+            title: "开始导入",
+            message: "素材已加入 Editor 工作台，正在后台下载",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        self.present(alert, animated: true)
+    }
+    
+    @MainActor
+    private func presentImportError(_ message: String) {
+        let alert = UIAlertController(
+            title: "导入失败",
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 }
