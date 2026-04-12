@@ -13,6 +13,7 @@ final class EditorViewModel: ObservableObject {
     private let layoutService: TimelineLayoutService
     private var cancellables: Set<AnyCancellable> = []
     private var layoutTask: Task<Void, Never>?
+    private var previewTask: Task<Void, Never>?
     private var dirtyState = TimelineDirtyState()
 
     init(
@@ -75,7 +76,8 @@ final class EditorViewModel: ObservableObject {
         let seconds = currentState.draft.playheadSeconds
         let wantsPlay = shouldPlay ?? (currentState.playbackUIState == .playing)
 
-        Task {
+        previewTask?.cancel()
+        previewTask = Task {
             try? await previewService.updatePreview(
                 draft: draft,
                 at: seconds,
@@ -85,16 +87,19 @@ final class EditorViewModel: ObservableObject {
     }
 
     func appendImportedClip(_ importedClip: ImportedClip) {
-        store.perform(AppendClipCommand(clip: TimelineClip(importedClip: importedClip)))
+        store.perform(
+            AppendClipCommand(clip: TimelineClip(importedClip: importedClip)),
+            baseDraft: currentState.draft
+        )
     }
 
     func undo() {
-        store.setPlaybackUIState(.paused)
-        store.undo()
+        store.setPlaybackUIState(.paused, baseDraft: currentState.draft)
+        store.undo(baseDraft: currentState.draft)
     }
 
     func redo() {
-        store.redo()
+        store.redo(baseDraft: currentState.draft)
     }
 
     func movePlayhead(
@@ -106,7 +111,7 @@ final class EditorViewModel: ObservableObject {
             ? TimelineSnapService.nearestTime(to: seconds, in: currentState.draft)
             : seconds
         if recordHistory {
-            store.perform(SetPlayheadCommand(seconds: snapped))
+            store.perform(SetPlayheadCommand(seconds: snapped), baseDraft: currentState.draft)
         } else {
             var draft = currentState.draft
             draft.playheadSeconds = max(0, min(snapped, draft.totalDuration))
@@ -122,7 +127,10 @@ final class EditorViewModel: ObservableObject {
 
     func setTrimRange(start: Double, end: Double, recordHistory: Bool) {
         if recordHistory {
-            store.perform(SetTrimRangeCommand(startSeconds: start, endSeconds: end))
+            store.perform(
+                SetTrimRangeCommand(startSeconds: start, endSeconds: end),
+                baseDraft: currentState.draft
+            )
             return
         }
 
@@ -134,16 +142,15 @@ final class EditorViewModel: ObservableObject {
             canUndo: currentState.canUndo,
             canRedo: currentState.canRedo
         )
+        refreshPreview(shouldPlay: currentState.playbackUIState == .playing)
     }
 
     func togglePlayback() {
         switch currentState.playbackUIState {
         case .playing:
-            store.setPlaybackUIState(.paused)
-            refreshPreview(shouldPlay: false)
+            store.setPlaybackUIState(.paused, baseDraft: currentState.draft)
         case .idle, .paused:
-            store.setPlaybackUIState(.playing)
-            refreshPreview(shouldPlay: true)
+            store.setPlaybackUIState(.playing, baseDraft: currentState.draft)
         }
     }
 

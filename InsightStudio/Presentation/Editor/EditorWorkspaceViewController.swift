@@ -121,8 +121,8 @@ extension EditorWorkspaceViewController: UICollectionViewDataSource, UICollectio
         onSelectClip?(displayedClips[indexPath.item])
     }
     
-//    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-//        let width = collectionView.bounds.width - 24
-//        return CGSize(width: width, height: 92)
-//    }
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        let width = collectionView.bounds.width - 24
+        return CGSize(width: width, height: 96)
+    }
 }

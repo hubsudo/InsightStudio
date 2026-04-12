@@ -132,7 +132,7 @@ extension ClipEditorViewController: EditorTimelineViewDelegate {
         let duration = resolvedDurationSeconds()
         clip.selectedStartSeconds = Double(startRatio) * duration
         clip.selectedEndSeconds = Double(endRatio) * duration
-        context.clipLibraryRepository.update(clip)
+//        context.clipLibraryRepository.update(clip)
         refreshInfo()
         let previewSeconds = activeHandle == .left ? clip.selectedStartSeconds : clip.selectedEndSeconds
         seekPreview(to: previewSeconds)

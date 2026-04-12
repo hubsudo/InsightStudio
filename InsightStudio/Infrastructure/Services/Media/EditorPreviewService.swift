@@ -12,12 +12,12 @@ protocol EditorPreviewService: AnyObject {
 final class DefaultEditorPreviewService: EditorPreviewService {
     private let viewModel: ClipPlayerViewModel
     private let clipRepository: any ClipLibraryRepository
-    
-    private var lastDraftSignature: String?
-    private var currentClipID: UUID?
+
+    private var currentItemSourceKey: String?
     private var currentClipStart: Double = 0
     private var currentClipSourceStart: Double = 0
     private var currentClipDuration: Double = 0
+    private var currentTimelineSeconds: Double = 0
     private var latestDraft: EditorDraft?
     private var desiredPlayback = false
     private var timeObserver: Any?
@@ -38,6 +38,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
             guard let self, self.viewModel.player.rate > 0 else { return }
             let clipSeconds = max(0, time.seconds - self.currentClipSourceStart)
             let timelineTime = self.currentClipStart + min(clipSeconds, self.currentClipDuration)
+            self.currentTimelineSeconds = timelineTime
             self.onPlaybackTimeChange?(timelineTime)
             if clipSeconds >= self.currentClipDuration - 0.01 {
                 Task {
@@ -103,31 +104,33 @@ final class DefaultEditorPreviewService: EditorPreviewService {
 
         let clampedTimelineSeconds = min(max(0, timelineSeconds), draft.totalDuration)
         let segment = resolveSegment(in: draft, at: clampedTimelineSeconds)
-        let signature = Self.signature(for: draft)
-        let shouldReplaceItem = signature != lastDraftSignature || currentClipID != segment.clip.id
+        let importedClip = try resolveImportedClip(for: segment.clip)
+        let itemSourceKey = try makeItemSourceKey(for: importedClip)
+        let shouldReplaceItem = itemSourceKey != currentItemSourceKey
 
         if shouldReplaceItem {
-            let item = try buildPlayerItem(for: segment.clip)
-            currentClipID = segment.clip.id
-            currentClipStart = segment.startTime
-            currentClipSourceStart = segment.clip.sourceStartSeconds
-            currentClipDuration = segment.clip.duration
-            lastDraftSignature = signature
+            let item = AVPlayerItem(url: try resolvedURL(for: importedClip))
+            currentItemSourceKey = itemSourceKey
 
             await MainActor.run {
                 self.viewModel.replaceCurrentItem(with: item)
             }
 
             try await waitUntilReadyToPlay(item)
-        } else {
-            currentClipStart = segment.startTime
-            currentClipSourceStart = segment.clip.sourceStartSeconds
-            currentClipDuration = segment.clip.duration
         }
+
+        currentClipStart = segment.startTime
+        currentClipSourceStart = segment.clip.sourceStartSeconds
+        currentClipDuration = segment.clip.duration
 
         let clipSeconds = min(max(clampedTimelineSeconds - segment.startTime, 0), segment.clip.duration)
         let sourceSeconds = segment.clip.sourceStartSeconds + clipSeconds
-        try await seekPlayer(to: CMTime(seconds: sourceSeconds, preferredTimescale: 600))
+        if shouldReplaceItem || shouldSeek(toSourceSeconds: sourceSeconds, timelineSeconds: clampedTimelineSeconds) {
+            try await seekPlayer(to: CMTime(seconds: sourceSeconds, preferredTimescale: 600))
+            currentTimelineSeconds = clampedTimelineSeconds
+        } else {
+            currentTimelineSeconds = resolvedTimelineTime(forSourceSeconds: currentPlayerTimeSeconds())
+        }
 
         await MainActor.run {
             if shouldPlay {
@@ -141,11 +144,11 @@ final class DefaultEditorPreviewService: EditorPreviewService {
     @MainActor
     private func clearPlayer() {
         viewModel.clear()
-        currentClipID = nil
+        currentItemSourceKey = nil
         currentClipStart = 0
         currentClipSourceStart = 0
         currentClipDuration = 0
-        lastDraftSignature = nil
+        currentTimelineSeconds = 0
         desiredPlayback = false
         isHandlingPlaybackEnd = false
     }
@@ -172,7 +175,7 @@ final class DefaultEditorPreviewService: EditorPreviewService {
         try? await updatePreview(draft: draft, at: nextTimelineTime, shouldPlay: true)
     }
 
-    private func buildPlayerItem(for clip: TimelineClip) throws -> AVPlayerItem {
+    private func resolveImportedClip(for clip: TimelineClip) throws -> ImportedClip {
         guard let importedClip = clipRepository.findClip(by: clip.importedClipID) else {
             throw NSError(
                 domain: "EditorPreview",
@@ -180,7 +183,10 @@ final class DefaultEditorPreviewService: EditorPreviewService {
                 userInfo: [NSLocalizedDescriptionKey: "未找到对应的素材记录"]
             )
         }
-        
+        return importedClip
+    }
+
+    private func resolvedURL(for importedClip: ImportedClip) throws -> URL {
         guard let url = PlayerFactory.resolveURL(from: importedClip) else {
             throw NSError(
                 domain: "EditorPreview",
@@ -188,7 +194,12 @@ final class DefaultEditorPreviewService: EditorPreviewService {
                 userInfo: [NSLocalizedDescriptionKey: "无有效资源地址"]
             )
         }
-        return AVPlayerItem(url: url)
+        return url
+    }
+
+    private func makeItemSourceKey(for importedClip: ImportedClip) throws -> String {
+        let url = try resolvedURL(for: importedClip)
+        return "\(importedClip.id.uuidString)|\(url.absoluteString)"
     }
 
     private func waitUntilReadyToPlay(_ item: AVPlayerItem) async throws {
@@ -237,6 +248,28 @@ final class DefaultEditorPreviewService: EditorPreviewService {
         }
     }
 
+    private func shouldSeek(toSourceSeconds targetSourceSeconds: Double, timelineSeconds: Double) -> Bool {
+        let currentSourceSeconds = currentPlayerTimeSeconds()
+        guard currentSourceSeconds.isFinite else { return true }
+
+        let sourceDelta = abs(currentSourceSeconds - targetSourceSeconds)
+        let timelineDelta = abs(resolvedTimelineTime(forSourceSeconds: currentSourceSeconds) - timelineSeconds)
+        return max(sourceDelta, timelineDelta) > 0.05
+    }
+
+    private func currentPlayerTimeSeconds() -> Double {
+        let seconds = viewModel.player.currentTime().seconds
+        if seconds.isFinite {
+            return max(seconds, 0)
+        }
+        return currentClipSourceStart + max(currentTimelineSeconds - currentClipStart, 0)
+    }
+
+    private func resolvedTimelineTime(forSourceSeconds sourceSeconds: Double) -> Double {
+        let clipSeconds = max(0, sourceSeconds - currentClipSourceStart)
+        return currentClipStart + min(clipSeconds, currentClipDuration)
+    }
+
     private func resolveSegment(in draft: EditorDraft, at timelineSeconds: Double) -> (clip: TimelineClip, startTime: Double) {
         var cursor = 0.0
         for clip in draft.clips {
@@ -247,11 +280,5 @@ final class DefaultEditorPreviewService: EditorPreviewService {
             cursor = end
         }
         return (draft.clips[0], 0)
-    }
-
-    private static func signature(for draft: EditorDraft) -> String {
-        draft.clips
-            .map { "\($0.id.uuidString)|\($0.sourceID)|\($0.sourceStartSeconds)|\($0.sourceEndSeconds)|\($0.duration)" }
-            .joined(separator: "||")
     }
 }

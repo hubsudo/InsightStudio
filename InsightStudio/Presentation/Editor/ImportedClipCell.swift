@@ -5,75 +5,101 @@ final class ImportedClipCell: UICollectionViewCell {
     
     var onTapDelete: ((ImportedClip) -> Void)?
     private var currentClip: ImportedClip?
+    private var currentThumbnailURL: String?
 
-    private let imageView: AsyncImageView = {
+    private let thumbnailView: AsyncImageView = {
         let view = AsyncImageView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.contentMode = .scaleAspectFill
         view.clipsToBounds = true
-        view.layer.cornerRadius = 12
+        view.layer.cornerRadius = 10
+        view.backgroundColor = .tertiarySystemFill
         return view
     }()
 
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = .label
         label.numberOfLines = 2
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
         return label
     }()
-    
-    private let progressView = UIProgressView(progressViewStyle: .default)
-    private let stateLabel = UILabel()
-    private let deleteButton = UIButton(type: .system)
+
+    private let stateLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabel
+        label.numberOfLines = 1
+        return label
+    }()
+
+    private let progressView: UIProgressView = {
+        let view = UIProgressView(progressViewStyle: .default)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
+    private let deleteButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(UIImage(systemName: "trash"), for: .normal)
+        button.tintColor = .secondaryLabel
+        return button
+    }()
+
+    private lazy var textStack: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [titleLabel, stateLabel, progressView])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 8
+        return stack
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 12
+
+        contentView.backgroundColor = .secondarySystemBackground
+        contentView.layer.cornerRadius = 14
         contentView.layer.borderWidth = 1
         contentView.layer.borderColor = UIColor.separator.cgColor
-        contentView.backgroundColor = .secondarySystemBackground
+        contentView.clipsToBounds = true
 
-        deleteButton.setImage(UIImage(systemName: "trash"), for: .normal)
         deleteButton.addTarget(self, action: #selector(didTapDelete), for: .touchUpInside)
 
-        [imageView,
-         titleLabel,
-         progressView,
-         stateLabel,
+        [thumbnailView,
+         textStack,
          deleteButton
         ].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview($0)
         }
-        
+
         NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            imageView.heightAnchor.constraint(equalToConstant: 100),
-            
-            deleteButton.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 8),
-            deleteButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            thumbnailView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            thumbnailView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            thumbnailView.widthAnchor.constraint(equalToConstant: 120),
+            thumbnailView.heightAnchor.constraint(equalToConstant: 68),
+
+            deleteButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            deleteButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
             deleteButton.widthAnchor.constraint(equalToConstant: 28),
             deleteButton.heightAnchor.constraint(equalToConstant: 28),
 
-            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
-            titleLabel.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -8),
-            titleLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 6),
-            
-            progressView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            progressView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            progressView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            
-            stateLabel.topAnchor.constraint(equalTo: progressView.bottomAnchor, constant: 8),
-            stateLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            stateLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            stateLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8),
+            textStack.leadingAnchor.constraint(equalTo: thumbnailView.trailingAnchor, constant: 12),
+            textStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            textStack.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -8),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
+
+            progressView.heightAnchor.constraint(equalToConstant: 3)
         ])
-        
-        stateLabel.font = .systemFont(ofSize: 13)
-        stateLabel.textColor = .secondaryLabel
+
+        titleLabel.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        stateLabel.setContentHuggingPriority(.required, for: .vertical)
+        progressView.setContentHuggingPriority(.required, for: .vertical)
     }
 
     required init?(coder: NSCoder) {
@@ -81,8 +107,18 @@ final class ImportedClipCell: UICollectionViewCell {
     }
 
     func configure(with clip: ImportedClip, pipeline: ImagePipeline) {
+        currentClip = clip
+
         titleLabel.text = clip.title
-        imageView.setImage(urlString: clip.thumbnailURL, pipeline: pipeline)
+        updateDownloadUI(with: clip)
+
+        if currentThumbnailURL != clip.thumbnailURL {
+            currentThumbnailURL = clip.thumbnailURL
+            thumbnailView.setImage(urlString: clip.thumbnailURL, pipeline: pipeline)
+        }
+    }
+
+    func updateDownloadUI(with clip: ImportedClip) {
         progressView.progress = Float(clip.downloadProgress)
         
         switch clip.resolvedDownloadState {
@@ -114,5 +150,11 @@ final class ImportedClipCell: UICollectionViewCell {
         super.prepareForReuse()
         currentClip = nil
         onTapDelete = nil
+        currentThumbnailURL = nil
+        
+        titleLabel.text = nil
+        stateLabel.text = nil
+        progressView.progress = 0
+        progressView.isHidden = false
     }
 }

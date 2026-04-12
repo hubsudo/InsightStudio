@@ -24,21 +24,21 @@ final class UserDefaultsClipLibraryRepository: ClipLibraryRepository {
         persist(clips)
     }
 
-    func update(_ clip: ImportedClip) {
-        var clips = loadAll()
-        if let idx = clips.firstIndex(where: { $0.id == clip.id }) {
-            clips[idx] = clip
-        }
-        persist(clips)
-    }
+//    func update(_ clip: ImportedClip) {
+//        var clips = loadAll()
+//        if let idx = clips.firstIndex(where: { $0.id == clip.id }) {
+//            clips[idx] = clip
+//        }
+//        persist(clips)
+//    }
     
-    func updateProgress(for id: UUID, progress: Double) {
-        var clips = loadAll()
-        guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
-        clips[index].downloadProgress = progress
-        clips[index].downloadState = .downloading
-        persist(clips)
-    }
+//    func updateProgress(for id: UUID, progress: Double) {
+//        var clips = loadAll()
+//        guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
+//        clips[index].downloadProgress = progress
+//        clips[index].downloadState = .downloading
+//        persist(clips)
+//    }
     
     func markReady(for id: UUID, localFileURL: URL, durationSeconds: Double) {
         var clips = loadAll()

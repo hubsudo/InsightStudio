@@ -12,22 +12,34 @@ final class EditorStore {
         syncHistoryFlags()
     }
 
-    func perform(_ command: any EditorCommand) {
+    func perform(_ command: any EditorCommand, baseDraft: EditorDraft? = nil) {
+        if let baseDraft {
+            state.draft = baseDraft
+        }
         historyManager.perform(command, on: &state.draft)
         syncHistoryFlags()
     }
 
-    func undo() {
+    func undo(baseDraft: EditorDraft? = nil) {
+        if let baseDraft {
+            state.draft = baseDraft
+        }
         historyManager.undo(on: &state.draft)
         syncHistoryFlags()
     }
 
-    func redo() {
+    func redo(baseDraft: EditorDraft? = nil) {
+        if let baseDraft {
+            state.draft = baseDraft
+        }
         historyManager.redo(on: &state.draft)
         syncHistoryFlags()
     }
 
-    func setPlaybackUIState(_ newValue: PlaybackUIState) {
+    func setPlaybackUIState(_ newValue: PlaybackUIState, baseDraft: EditorDraft? = nil) {
+        if let baseDraft {
+            state.draft = baseDraft
+        }
         state.playbackUIState = newValue
         state.draft.isPlaying = (newValue == .playing)
     }
