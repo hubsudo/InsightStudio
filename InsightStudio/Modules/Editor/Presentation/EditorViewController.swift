@@ -109,11 +109,19 @@ final class EditorViewController: UIViewController {
                 currentContentOffsetX: self.timelineView.contentOffsetX
             )
             self.timelineView.setContentOffsetX(newOffset)
+            self.viewModel.updateTimelineViewport(
+                visibleWidth: visibleWidth,
+                contentOffsetX: self.timelineView.contentOffsetX
+            )
         }
         timelineView.onScrubOffsetChanged = { [weak self] contentOffsetX, state in
             guard let self else { return }
             let visibleWidth = self.timelineView.bounds.width
             guard visibleWidth > 0 else { return }
+            self.viewModel.updateTimelineViewport(
+                visibleWidth: visibleWidth,
+                contentOffsetX: contentOffsetX
+            )
             let playhead = self.viewModel.playheadSeconds(
                 forCenteredContentOffset: contentOffsetX,
                 visibleWidth: visibleWidth
@@ -170,6 +178,13 @@ final class EditorViewController: UIViewController {
                 self.syncTimelineToPlayheadIfPossible()
             }
             .store(in: &cancellables)
+
+        viewModel.$timelineSnapshot
+            .receive(on: RunLoop.main)
+            .sink { [weak self] snapshot in
+                self?.timelineView.apply(snapshot: snapshot)
+            }
+            .store(in: &cancellables)
     }
 
     override func viewDidLayoutSubviews() {
@@ -184,6 +199,10 @@ final class EditorViewController: UIViewController {
         timelineView.contentWidth = viewModel.timelineContentWidth(visibleWidth: visibleWidth)
         let offset = viewModel.centeredContentOffsetX(visibleWidth: visibleWidth)
         timelineView.setContentOffsetX(offset)
+        viewModel.updateTimelineViewport(
+            visibleWidth: visibleWidth,
+            contentOffsetX: offset
+        )
     }
 
     private func snapTrimRangeToPlayhead(

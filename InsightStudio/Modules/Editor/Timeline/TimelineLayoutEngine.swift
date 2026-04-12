@@ -1,47 +1,44 @@
 import Foundation
 
 enum TimelineLayoutEngine {
-    static func buildSnapshot(
+    nonisolated static func buildPlan(
         clips: [TimelineClipLayoutInput],
-        key: TimelineLayoutKey,
-        previous: TimelineLayoutSnapshot?,
-        generation: Int
-    ) -> TimelineLayoutSnapshot {
-        var items: [TimelineLayoutItemModel] = []
-        var changedIDs: Set<UUID> = []
+        key: TimelineLayoutKey
+    ) -> TimelineTrackLayoutPlan {
+        var orderedClipIDs: [UUID] = []
+        var indexByClipID: [UUID: TimelineClipIndexModel] = [:]
         var cursorX = key.contentInset.left
         var cursorTime = 0.0
 
         for clip in clips {
             let width = max(clip.duration * key.pixelsPerSecond, 1)
-            let item = TimelineLayoutItemModel(
+            let item = TimelineClipIndexModel(
                 clipID: clip.id,
-                rect: TimelineRect(
-                    x: cursorX,
-                    y: key.contentInset.top,
-                    width: width,
-                    height: key.trackHeight
-                ),
+                title: clip.title,
                 startTime: cursorTime,
                 endTime: cursorTime + clip.duration,
-                title: clip.title
+                originX: cursorX,
+                width: width
             )
-            if let old = previous?.items.first(where: { $0.clipID == clip.id }), old == item {
-                // no-op
-            } else {
-                changedIDs.insert(clip.id)
-            }
-            items.append(item)
+            orderedClipIDs.append(clip.id)
+            indexByClipID[clip.id] = item
             cursorX += width
             cursorTime += clip.duration
         }
 
-        return TimelineLayoutSnapshot(
+        return TimelineTrackLayoutPlan(
             key: key,
-            items: items,
+            orderedClipIDs: orderedClipIDs,
+            indexByClipID: indexByClipID,
             contentWidth: cursorX + key.contentInset.right,
-            generation: generation,
-            changedClipIDs: changedIDs
+            totalDuration: cursorTime
         )
+    }
+
+    nonisolated static func buildItems(
+        clipIDs: [UUID],
+        plan: TimelineTrackLayoutPlan
+    ) -> [TimelineLayoutItemModel] {
+        clipIDs.compactMap { plan.item(for: $0) }
     }
 }

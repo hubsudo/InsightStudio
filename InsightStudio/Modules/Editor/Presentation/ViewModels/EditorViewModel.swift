@@ -14,8 +14,10 @@ final class EditorViewModel: ObservableObject {
     private let clipRepository: any ClipLibraryRepository
     private var cancellables: Set<AnyCancellable> = []
     private var layoutTask: Task<Void, Never>?
+    private var layoutPreheatTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
-    private var dirtyState = TimelineDirtyState()
+    private var latestViewportRequest: TimelineViewportLayoutRequest?
+    private let preheatPolicy = TimelinePreheatPolicy.editorDefault
 
     init(
         initialDraft: EditorDraft,
@@ -199,7 +201,6 @@ final class EditorViewModel: ObservableObject {
             canUndo: currentState.canUndo,
             canRedo: currentState.canRedo
         )
-        dirtyState.markAllDirty()
         scheduleRelayout(reason: .zoomChanged)
 
         let newContentStartX = contentStartX(visibleWidth: visibleWidth, pixelsPerSecond: newPPS)
@@ -260,38 +261,93 @@ final class EditorViewModel: ObservableObject {
         clipRepository.findClip(by: clip.importedClipID)?.title ?? "Clip"
     }
 
+    func updateTimelineViewport(
+        visibleWidth: CGFloat,
+        contentOffsetX: CGFloat
+    ) {
+        guard visibleWidth > 0 else { return }
+        let visibleRange = visibleTimeRange(
+            contentOffsetX: contentOffsetX,
+            visibleWidth: visibleWidth
+        )
+        let viewportRequest = preheatPolicy.makeViewportRequest(
+            visibleRange: visibleRange,
+            trackDuration: currentState.draft.totalDuration
+        )
+        guard viewportRequest != latestViewportRequest else { return }
+        latestViewportRequest = viewportRequest
+        scheduleRelayout(reason: .rulerChanged)
+    }
+
     private func scheduleRelayout(reason: TimelineInvalidationReason) {
-        switch reason {
-        case .zoomChanged, .clipsChanged, .fullReload, .rulerChanged:
-            dirtyState.markAllDirty()
-        case .durationsChanged:
-            dirtyState.markAllDirty()
+        guard let videoTrack = currentState.draft.videoTrack else {
+            timelineSnapshot = nil
+            return
         }
 
-        let clips = (currentState.draft.videoTrack?.clips ?? []).map {
+        let clips = videoTrack.clips.map {
             TimelineClipLayoutInput(
                 id: $0.id,
                 title: clipDisplayTitle($0),
                 duration: $0.duration
             )
         }
+        let viewport = latestViewportRequest ?? preheatPolicy.makeViewportRequest(
+            visibleRange: TimelineTimeRange(start: 0, end: currentState.draft.totalDuration),
+            trackDuration: currentState.draft.totalDuration
+        )
 
         let key = TimelineLayoutKey(
-            clipIDs: clips.map(\.id),
-            renderedDurations: clips.map(\.duration),
+            trackID: videoTrack.id,
             pixelsPerSecond: currentState.draft.zoomPixelsPerSecond,
             trackHeight: 72,
             contentInset: timelineInsets
         )
 
         layoutTask?.cancel()
+        layoutPreheatTask?.cancel()
         layoutTask = Task { [weak self] in
             guard let self else { return }
-            let snapshot = await self.layoutService.makeSnapshot(clips: clips, key: key)
+            let snapshot = await self.layoutService.makeSnapshot(
+                trackID: videoTrack.id,
+                clips: clips,
+                key: key,
+                viewport: viewport
+            )
             guard !Task.isCancelled else { return }
             if (self.timelineSnapshot?.generation ?? -1) <= snapshot.generation {
                 self.timelineSnapshot = snapshot
             }
+
+            self.layoutPreheatTask?.cancel()
+            self.layoutPreheatTask = Task { [weak self] in
+                guard let self else { return }
+                let preheatedSnapshot = await self.layoutService.preheat(
+                    trackID: videoTrack.id,
+                    clips: clips,
+                    key: key,
+                    viewport: viewport,
+                    generation: snapshot.generation
+                )
+                guard !Task.isCancelled, let preheatedSnapshot else { return }
+                if (self.timelineSnapshot?.generation ?? -1) <= preheatedSnapshot.generation {
+                    self.timelineSnapshot = preheatedSnapshot
+                }
+            }
         }
+    }
+
+    private func visibleTimeRange(
+        contentOffsetX: CGFloat,
+        visibleWidth: CGFloat
+    ) -> TimelineTimeRange {
+        let safePixelsPerSecond = max(currentState.draft.zoomPixelsPerSecond, 1)
+        let contentStart = Double(contentStartX(visibleWidth: visibleWidth))
+        let visibleStart = max(0, (Double(contentOffsetX) - contentStart) / safePixelsPerSecond)
+        let visibleEnd = min(
+            currentState.draft.totalDuration,
+            max(visibleStart, (Double(contentOffsetX + visibleWidth) - contentStart) / safePixelsPerSecond)
+        )
+        return TimelineTimeRange(start: visibleStart, end: visibleEnd)
     }
 }

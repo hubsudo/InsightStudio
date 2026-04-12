@@ -12,6 +12,7 @@ final class TimelineView: UIView {
 
     let rulerView = TimelineRulerView()
     private let trackBackgroundView = UIView()
+    private let clipContainerView = UIView()
     let playheadView = UIView()
     private let trimSelectionView = UIView()
     private let leftTrimHandle = UIView()
@@ -52,6 +53,8 @@ final class TimelineView: UIView {
     private var scrubStartOffsetX: CGFloat = 0
     private var trimEditStartRange: ClosedRange<Double>?
     private var trimEditHandle: TimelineTrimHandle?
+    private var currentSnapshot: TimelineLayoutSnapshot?
+    private var renderedClipViews: [UUID: TimelineClipCell] = [:]
 
     private lazy var pinchGesture: UIPinchGestureRecognizer = {
         let gesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
@@ -80,17 +83,21 @@ final class TimelineView: UIView {
         backgroundColor = .systemBackground
         rulerView.backgroundColor = .secondarySystemBackground
         trackBackgroundView.backgroundColor = .quaternarySystemFill
+        clipContainerView.backgroundColor = .clear
+        clipContainerView.clipsToBounds = true
 
         addGestureRecognizer(scrubGesture)
         addGestureRecognizer(pinchGesture)
 
         addSubview(rulerView)
         addSubview(trackBackgroundView)
+        addSubview(clipContainerView)
         addSubview(trimSelectionView)
         addSubview(playheadView)
 
         rulerView.translatesAutoresizingMaskIntoConstraints = false
         trackBackgroundView.translatesAutoresizingMaskIntoConstraints = false
+        clipContainerView.translatesAutoresizingMaskIntoConstraints = false
         playheadView.translatesAutoresizingMaskIntoConstraints = false
         playheadView.backgroundColor = .systemRed
         playheadView.layer.cornerRadius = 1
@@ -120,6 +127,11 @@ final class TimelineView: UIView {
             trackBackgroundView.trailingAnchor.constraint(equalTo: trailingAnchor),
             trackBackgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
+            clipContainerView.topAnchor.constraint(equalTo: rulerView.bottomAnchor),
+            clipContainerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            clipContainerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            clipContainerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             playheadView.widthAnchor.constraint(equalToConstant: 2),
             playheadView.topAnchor.constraint(equalTo: rulerView.bottomAnchor),
             playheadView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -138,6 +150,7 @@ final class TimelineView: UIView {
             contentOffsetX = clamped
             rulerView.contentOffsetX = clamped
         }
+        layoutClipViews()
         layoutTrimSelection()
     }
 
@@ -155,6 +168,12 @@ final class TimelineView: UIView {
         if notify {
             onScrubOffsetChanged?(clamped, state)
         }
+    }
+
+    func apply(snapshot: TimelineLayoutSnapshot?) {
+        currentSnapshot = snapshot
+        syncRenderedClipViews()
+        setNeedsLayout()
     }
 
     @objc
@@ -233,6 +252,47 @@ final class TimelineView: UIView {
         return min(max(proposed, 0), maxOffset)
     }
 
+    private func syncRenderedClipViews() {
+        guard let currentSnapshot else {
+            renderedClipViews.values.forEach { $0.removeFromSuperview() }
+            renderedClipViews.removeAll()
+            return
+        }
+
+        let incomingIDs = Set(currentSnapshot.items.map(\.clipID))
+
+        let removableIDs = renderedClipViews.keys.filter { incomingIDs.contains($0) == false }
+        for clipID in removableIDs {
+            guard let clipView = renderedClipViews[clipID] else { continue }
+            clipView.removeFromSuperview()
+            renderedClipViews.removeValue(forKey: clipID)
+        }
+
+        for item in currentSnapshot.items {
+            let clipView: TimelineClipCell
+            if let existing = renderedClipViews[item.clipID] {
+                clipView = existing
+            } else {
+                let created = TimelineClipCell(frame: .zero)
+                renderedClipViews[item.clipID] = created
+                clipContainerView.addSubview(created)
+                clipView = created
+            }
+
+            if currentSnapshot.changedClipIDs.contains(item.clipID) || clipView.superview == nil {
+                clipView.configure(with: item)
+            }
+        }
+    }
+
+    private func layoutClipViews() {
+        guard let currentSnapshot else { return }
+        for item in currentSnapshot.items {
+            guard let clipView = renderedClipViews[item.clipID] else { continue }
+            clipView.frame = frame(for: item)
+        }
+    }
+
     private func layoutTrimSelection() {
         guard
             totalDuration > 0,
@@ -265,6 +325,15 @@ final class TimelineView: UIView {
 
     private func x(for timelineSeconds: Double) -> CGFloat {
         leadingPadding + leftInset + CGFloat(timelineSeconds * pixelsPerSecond) - contentOffsetX
+    }
+
+    private func frame(for item: TimelineLayoutItemModel) -> CGRect {
+        CGRect(
+            x: leadingPadding + CGFloat(item.rect.x) - contentOffsetX,
+            y: CGFloat(item.rect.y),
+            width: CGFloat(item.rect.width),
+            height: CGFloat(item.rect.height)
+        )
     }
 }
 
