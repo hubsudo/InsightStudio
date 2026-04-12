@@ -129,7 +129,14 @@ final class ImportedClipCell: UICollectionViewCell {
             stateLabel.text = "下载中 \(Int(clip.downloadProgress * 100))%"
             progressView.isHidden = false
         case .ready:
-            stateLabel.text = "已下载，可本地播放"
+            switch clip.sourceKind {
+            case .remoteImport:
+                stateLabel.text = "已下载，可本地播放"
+            case .editedResult:
+                stateLabel.text = "编辑结果，可继续复用"
+            case .recoveredLocal:
+                stateLabel.text = "本地恢复素材，可本地播放"
+            }
             progressView.isHidden = true
         case .failed:
             stateLabel.text = clip.lastErrorMessage ?? "下载失败"

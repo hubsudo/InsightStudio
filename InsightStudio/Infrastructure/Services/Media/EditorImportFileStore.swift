@@ -26,6 +26,16 @@ final class EditorImportFileStore {
         baseDirectory.appendingPathComponent("\(assetID).mp4")
     }
 
+    func localURL(for assetID: String, fileExtension: String) -> URL {
+        baseDirectory.appendingPathComponent("\(assetID).\(fileExtension)")
+    }
+
+    func existingLocalURL(for assetID: String) -> URL? {
+        allLocalFiles().first {
+            $0.deletingPathExtension().lastPathComponent == assetID
+        }
+    }
+
     func fileExists(for assetID: String) -> Bool {
         fm.fileExists(atPath: localURL(for: assetID).path)
     }

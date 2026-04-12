@@ -28,6 +28,7 @@ enum ClipLibraryMutation {
 enum ClipLibraryEffect {
     case restoreFromStorage
     case startImport(ImportedClip)
+    case persistClip(ImportedClip)
     case deleteClip(ImportedClip)
     case deleteAll
     case none
@@ -69,6 +70,17 @@ enum ClipLibraryReducer {
                 ],
                 effects: [
                     .startImport(clip)
+                ]
+            )
+
+        case .localClipCreated(let clip):
+            return (
+                mutations: [
+                    .insertClip(clip),
+                    .setErrorMessage(nil)
+                ],
+                effects: [
+                    .persistClip(clip)
                 ]
             )
 

@@ -1,7 +1,7 @@
 import Foundation
 
 struct EditorDraft: Equatable, Sendable {
-    var clips: [TimelineClip]
+    var tracks: [TimelineTrack]
     var playheadSeconds: Double
     var isPlaying: Bool
     var zoomPixelsPerSecond: Double
@@ -9,15 +9,17 @@ struct EditorDraft: Equatable, Sendable {
     var trimEndSeconds: Double
 
     nonisolated init(
-        clips: [TimelineClip] = [],
+        tracks: [TimelineTrack] = [],
         playheadSeconds: Double = 0,
         isPlaying: Bool = false,
         zoomPixelsPerSecond: Double = 56,
         trimStartSeconds: Double? = nil,
         trimEndSeconds: Double? = nil
     ) {
-        self.clips = clips
-        let total = clips.reduce(0) { $0 + $1.duration }
+        self.tracks = tracks
+        let total = tracks
+            .first(where: { $0.kind == .video })?
+            .duration ?? 0
         let clampedPlayhead = min(max(playheadSeconds, 0), total)
         self.playheadSeconds = clampedPlayhead
         self.isPlaying = isPlaying
@@ -40,11 +42,23 @@ struct EditorDraft: Equatable, Sendable {
     }
 
     var totalDuration: Double {
-        clips.reduce(0) { $0 + $1.duration }
+        videoTrack?.duration ?? 0
     }
 
     var trimRange: ClosedRange<Double> {
         trimStartSeconds...trimEndSeconds
+    }
+
+    var videoTrack: TimelineTrack? {
+        tracks.first(where: { $0.kind == .video })
+    }
+
+    var videoClipsCount: Int {
+        videoTrack?.clips.count ?? 0
+    }
+
+    var hasVideoClips: Bool {
+        videoTrack?.clips.isEmpty == false
     }
 
     mutating func setTrimRange(start: Double, end: Double, minimumDuration: Double = 0.1) {
@@ -66,12 +80,27 @@ struct EditorDraft: Equatable, Sendable {
         playheadSeconds = min(max(playheadSeconds, 0), total)
         setTrimRange(start: trimStartSeconds, end: trimEndSeconds, minimumDuration: minimumTrimDuration)
     }
+
+    mutating func appendClip(_ clip: TimelineClip) {
+        if let index = tracks.firstIndex(where: { $0.kind == .video }) {
+            tracks[index].clips.append(clip)
+        } else {
+            tracks.append(
+                TimelineTrack(kind: .video, clips: [clip])
+            )
+        }
+    }
 }
 
 extension EditorDraft {
     init(importedClip: ImportedClip) {
         self.init(
-            clips: [TimelineClip(importedClip: importedClip)],
+            tracks: [
+                TimelineTrack(
+                    kind: .video,
+                    clips: [TimelineClip(importedClip: importedClip)]
+                )
+            ],
             playheadSeconds: 0,
             isPlaying: false
         )

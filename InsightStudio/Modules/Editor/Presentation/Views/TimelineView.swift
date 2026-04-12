@@ -201,7 +201,9 @@ final class TimelineView: UIView {
         switch gesture.state {
         case .began:
             trimEditHandle = handle
-            trimEditStartRange = trimRange ?? (0...minimumDuration)
+            let initialRange = trimRange ?? (0...minimumDuration)
+            trimEditStartRange = initialRange
+            onTrimRangeChanged?(initialRange, handle, .began)
         case .changed, .ended, .cancelled, .failed:
             guard trimEditHandle == handle, let startRange = trimEditStartRange else { return }
             let deltaSeconds = Double(gesture.translation(in: self).x) / max(pixelsPerSecond, 1)

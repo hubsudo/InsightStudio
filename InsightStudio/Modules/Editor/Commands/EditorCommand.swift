@@ -43,7 +43,7 @@ struct AppendClipCommand: EditorCommand {
 
     func apply(to draft: inout EditorDraft) {
         let oldTotal = draft.totalDuration
-        draft.clips.append(clip)
+        draft.appendClip(clip)
         if snapToEnd {
             draft.playheadSeconds = draft.totalDuration
         }

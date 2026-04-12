@@ -13,6 +13,7 @@ import AVFoundation
 enum ClipLibraryAction: Sendable {
     /// 外部 action
     case importRequested(ImportedClip)
+    case localClipCreated(ImportedClip)
     case deleteRequested(ImportedClip)
     case deleteAllRequested
     case restoreFromStorage
@@ -75,6 +76,9 @@ final class ClipLibraryPipeline: ObservableObject {
 
         case .startImport(let clip):
             startImportEffect(clip)
+
+        case .persistClip(let clip):
+            repository.save(clip)
 
         case .deleteClip(let clip):
             deleteClipEffect(clip)

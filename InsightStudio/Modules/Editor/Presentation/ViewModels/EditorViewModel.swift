@@ -11,6 +11,7 @@ final class EditorViewModel: ObservableObject {
 
     private let store: EditorStore
     private let layoutService: TimelineLayoutService
+    private let clipRepository: any ClipLibraryRepository
     private var cancellables: Set<AnyCancellable> = []
     private var layoutTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
@@ -20,13 +21,15 @@ final class EditorViewModel: ObservableObject {
         initialDraft: EditorDraft,
         store: EditorStore? = nil,
         layoutService: TimelineLayoutService,
-        previewService: EditorPreviewService
+        previewService: EditorPreviewService,
+        clipRepository: any ClipLibraryRepository
     ) {
         let store = store ?? EditorStore(initialDraft: initialDraft)
         self.store = store
         self.currentState = store.state
         self.layoutService = layoutService
         self.previewService = previewService
+        self.clipRepository = clipRepository
         self.previewService.onPlaybackTimeChange = { [weak self] seconds in
             Task { @MainActor [weak self] in
                 self?.syncPlaybackTime(seconds)
@@ -42,13 +45,19 @@ final class EditorViewModel: ObservableObject {
             .sink { [weak self] state in
                 guard let self else { return }
                 self.currentState = state
-                self.snapCandidates = TimelineSnapService.buildCandidates(in: state.draft)
+                self.snapCandidates = TimelineSnapService.buildCandidates(
+                    in: state.draft,
+                    titleProvider: self.clipDisplayTitle
+                )
                 self.scheduleRelayout(reason: .fullReload)
                 self.refreshPreview(shouldPlay: state.playbackUIState == .playing)
             }
             .store(in: &cancellables)
 
-        snapCandidates = TimelineSnapService.buildCandidates(in: currentState.draft)
+        snapCandidates = TimelineSnapService.buildCandidates(
+            in: currentState.draft,
+            titleProvider: clipDisplayTitle
+        )
         scheduleRelayout(reason: .fullReload)
         refreshPreview(shouldPlay: false)
     }
@@ -108,7 +117,11 @@ final class EditorViewModel: ObservableObject {
         snapsToCandidates: Bool = true
     ) {
         let snapped = snapsToCandidates
-            ? TimelineSnapService.nearestTime(to: seconds, in: currentState.draft)
+            ? TimelineSnapService.nearestTime(
+                to: seconds,
+                in: currentState.draft,
+                titleProvider: clipDisplayTitle
+            )
             : seconds
         if recordHistory {
             store.perform(SetPlayheadCommand(seconds: snapped), baseDraft: currentState.draft)
@@ -143,6 +156,22 @@ final class EditorViewModel: ObservableObject {
             canRedo: currentState.canRedo
         )
         refreshPreview(shouldPlay: currentState.playbackUIState == .playing)
+    }
+
+    func commitTrimRange(
+        start: Double,
+        end: Double,
+        originalRange: ClosedRange<Double>
+    ) {
+        var baseDraft = currentState.draft
+        baseDraft.setTrimRange(
+            start: originalRange.lowerBound,
+            end: originalRange.upperBound
+        )
+        store.perform(
+            SetTrimRangeCommand(startSeconds: start, endSeconds: end),
+            baseDraft: baseDraft
+        )
     }
 
     func togglePlayback() {
@@ -227,6 +256,10 @@ final class EditorViewModel: ObservableObject {
         .init(top: 12, left: 16, bottom: 12, right: 16)
     }
 
+    func clipDisplayTitle(_ clip: TimelineClip) -> String {
+        clipRepository.findClip(by: clip.importedClipID)?.title ?? "Clip"
+    }
+
     private func scheduleRelayout(reason: TimelineInvalidationReason) {
         switch reason {
         case .zoomChanged, .clipsChanged, .fullReload, .rulerChanged:
@@ -235,8 +268,12 @@ final class EditorViewModel: ObservableObject {
             dirtyState.markAllDirty()
         }
 
-        let clips = currentState.draft.clips.map {
-            TimelineClipLayoutInput(id: $0.id, title: $0.title, duration: $0.duration)
+        let clips = (currentState.draft.videoTrack?.clips ?? []).map {
+            TimelineClipLayoutInput(
+                id: $0.id,
+                title: clipDisplayTitle($0),
+                duration: $0.duration
+            )
         }
 
         let key = TimelineLayoutKey(

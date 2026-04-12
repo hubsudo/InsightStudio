@@ -6,15 +6,22 @@ struct EditorModuleBuilder {
         context: AppContext
     ) -> EditorViewController {
         let clipPlayerViewModel = ClipPlayerViewModel()
+        let compositionBuilder = TimelineCompositionBuilder(
+            clipRepository: context.clipLibraryRepository
+        )
         let previewService = DefaultEditorPreviewService(
             viewModel: clipPlayerViewModel,
-            clipRepository: context.clipLibraryRepository,
+            compositionBuilder: compositionBuilder
+        )
+        let exportService = DefaultEditorExportService(
+            compositionBuilder: compositionBuilder
         )
         
         let viewModel = EditorViewModel(
             initialDraft: initialDraft,
             layoutService: TimelineLayoutService(),
-            previewService: previewService
+            previewService: previewService,
+            clipRepository: context.clipLibraryRepository
         )
         let workspaceViewModel = EditorWorkspaceViewModel(
             pipeline: context.clipPipeline,
@@ -22,6 +29,7 @@ struct EditorModuleBuilder {
         return EditorViewController(
             viewModel: viewModel,
             workspaceViewModel: workspaceViewModel,
+            exportService: exportService,
             context: context,
         )
     }

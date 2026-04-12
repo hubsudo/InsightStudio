@@ -5,6 +5,7 @@ import Combine
 final class EditorViewController: UIViewController {
     private let viewModel: EditorViewModel
     private let workspaceViewModel: EditorWorkspaceViewModel
+    private let exportService: any EditorExportService
     private let context: AppContext
 
     private let previewContainer = PreviewContainerView()
@@ -15,16 +16,30 @@ final class EditorViewController: UIViewController {
     private let playPauseButton = UIButton(type: .system)
     private let summaryLabel = UILabel()
     private let previewSubtitleLabel = UILabel()
+    private lazy var exportBarButtonItem = UIBarButtonItem(
+        title: "导出",
+        style: .prominent,
+        target: self,
+        action: #selector(exportTapped)
+    )
 
     private var cancellables: Set<AnyCancellable> = []
+    private var trimInteractionInitialRange: ClosedRange<Double>?
+    private var isExporting = false {
+        didSet {
+            updateExportButtonState()
+        }
+    }
 
     init(
         viewModel: EditorViewModel,
         workspaceViewModel: EditorWorkspaceViewModel,
+        exportService: any EditorExportService,
         context: AppContext,
     ) {
         self.viewModel = viewModel
         self.workspaceViewModel = workspaceViewModel
+        self.exportService = exportService
         self.context = context
         super.init(nibName: nil, bundle: nil)
     }
@@ -43,6 +58,7 @@ final class EditorViewController: UIViewController {
     }
 
     private func setupUI() {
+        navigationItem.rightBarButtonItem = exportBarButtonItem
         addButton.setTitle("追加远程", for: .normal)
         undoButton.setTitle("Undo", for: .normal)
         redoButton.setTitle("Redo", for: .normal)
@@ -108,13 +124,28 @@ final class EditorViewController: UIViewController {
         timelineView.onTrimRangeChanged = { [weak self] range, handle, state in
             guard let self else { return }
             switch state {
-            case .began, .changed:
+            case .began:
+                self.trimInteractionInitialRange = self.viewModel.currentState.draft.trimRange
+                self.viewModel.setTrimRange(start: range.lowerBound, end: range.upperBound, recordHistory: false)
+            case .changed:
                 self.viewModel.setTrimRange(start: range.lowerBound, end: range.upperBound, recordHistory: false)
             case .ended:
                 let snapped = self.snapTrimRangeToPlayhead(range: range, handle: handle)
-                self.viewModel.setTrimRange(start: snapped.lowerBound, end: snapped.upperBound, recordHistory: true)
+                let originalRange = self.trimInteractionInitialRange ?? self.viewModel.currentState.draft.trimRange
+                self.viewModel.commitTrimRange(
+                    start: snapped.lowerBound,
+                    end: snapped.upperBound,
+                    originalRange: originalRange
+                )
+                self.trimInteractionInitialRange = nil
             case .cancelled, .failed:
-                self.viewModel.setTrimRange(start: range.lowerBound, end: range.upperBound, recordHistory: false)
+                let originalRange = self.trimInteractionInitialRange ?? self.viewModel.currentState.draft.trimRange
+                self.viewModel.setTrimRange(
+                    start: originalRange.lowerBound,
+                    end: originalRange.upperBound,
+                    recordHistory: false
+                )
+                self.trimInteractionInitialRange = nil
             default:
                 break
             }
@@ -129,12 +160,13 @@ final class EditorViewController: UIViewController {
                 self.undoButton.isEnabled = state.canUndo
                 self.redoButton.isEnabled = state.canRedo
                 self.playPauseButton.setTitle(state.playbackUIState == .playing ? "Pause" : "Play", for: .normal)
-                self.summaryLabel.text = "clips: \(state.draft.clips.count) | total: \(String(format: "%.2f", state.draft.totalDuration))s | playhead: \(String(format: "%.2f", state.draft.playheadSeconds))s | trim: \(String(format: "%.2f", state.draft.trimStartSeconds))-\(String(format: "%.2f", state.draft.trimEndSeconds))s"
+                self.summaryLabel.text = "clips: \(state.draft.videoClipsCount) | total: \(String(format: "%.2f", state.draft.totalDuration))s | playhead: \(String(format: "%.2f", state.draft.playheadSeconds))s | trim: \(String(format: "%.2f", state.draft.trimStartSeconds))-\(String(format: "%.2f", state.draft.trimEndSeconds))s"
                 self.previewSubtitleLabel.text = "zoom: \(Int(state.draft.zoomPixelsPerSecond)) px/s | playback: \(state.playbackUIState)"
                 self.timelineView.pixelsPerSecond = state.draft.zoomPixelsPerSecond
                 self.timelineView.totalDuration = state.draft.totalDuration
                 self.timelineView.leftInset = CGFloat(self.viewModel.timelineInsets.left)
                 self.timelineView.trimRange = state.draft.trimRange
+                self.updateExportButtonState()
                 self.syncTimelineToPlayheadIfPossible()
             }
             .store(in: &cancellables)
@@ -190,11 +222,43 @@ final class EditorViewController: UIViewController {
     @objc private func undoTapped() { viewModel.undo() }
     @objc private func redoTapped() { viewModel.redo() }
     @objc private func playPauseTapped() { viewModel.togglePlayback() }
+    @objc private func exportTapped() {
+        guard isExporting == false else { return }
+        guard viewModel.currentState.draft.hasVideoClips else {
+            presentInfoAlert(title: "无法导出", message: "请先向时间轴追加至少一段视频素材")
+            return
+        }
+
+        isExporting = true
+        let draft = viewModel.currentState.draft
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let clip = try await self.exportService.export(
+                    draft: draft,
+                    template: .libraryDefault
+                )
+                self.context.clipPipeline.send(.localClipCreated(clip))
+                self.presentInfoAlert(
+                    title: "导出完成",
+                    message: "已导出到素材库，并标记为编辑结果，可继续复用"
+                )
+            } catch {
+                self.presentInfoAlert(
+                    title: "导出失败",
+                    message: error.localizedDescription
+                )
+            }
+
+            self.isExporting = false
+        }
+    }
 
     private func presentRemoteClipPicker() {
         workspaceViewModel.reload()
-        let excludedIDs = Set(viewModel.currentState.draft.clips.map(\.id))
-        let availableClips = workspaceViewModel.clips.filter { !excludedIDs.contains($0.id) }
+        let availableClips = workspaceViewModel.clips
         guard !availableClips.isEmpty else {
             let alert = UIAlertController(title: "提示", message: "素材库里没有可追加的其他视频", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "知道了", style: .default))
@@ -207,9 +271,6 @@ final class EditorViewController: UIViewController {
             context: context,
         )
         picker.screenTitle = "追加远程素材"
-        picker.clipFilter = { clip in
-            !excludedIDs.contains(clip.id)
-        }
         picker.onSelectClip = { [weak self] clip in
             self?.viewModel.appendImportedClip(clip)
             self?.dismiss(animated: true)
@@ -230,5 +291,20 @@ final class EditorViewController: UIViewController {
 
     @objc private func dismissPresentedPicker() {
         dismiss(animated: true)
+    }
+
+    private func updateExportButtonState() {
+        exportBarButtonItem.isEnabled = viewModel.currentState.draft.hasVideoClips && !isExporting
+        exportBarButtonItem.title = isExporting ? "导出中..." : "导出"
+    }
+
+    private func presentInfoAlert(title: String, message: String) {
+        let alert = UIAlertController(
+            title: title,
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "知道了", style: .default))
+        present(alert, animated: true)
     }
 }

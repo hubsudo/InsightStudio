@@ -136,6 +136,7 @@ final class UserDefaultsClipLibraryRepository: ClipLibraryRepository {
                 selectedEndSeconds: safeDuration,
                 downloadState: .ready,
                 downloadProgress: 1.0,
+                sourceKind: .recoveredLocal,
                 lastErrorMessage: nil
             )
 
@@ -197,15 +198,15 @@ private extension UserDefaultsClipLibraryRepository {
         fileStore: EditorImportFileStore
     ) -> Bool {
         let sourceID = clip.sourceID
-        let fallbackURL = fileStore.localURL(for: sourceID)
+        let existingURL = fileStore.existingLocalURL(for: sourceID)
 
         if let localURL = clip.localFileURL {
             if fileStore.fileExists(at: localURL) {
                 return false
             }
 
-            if fileStore.fileExists(for: sourceID) {
-                clip.localFileURL = fallbackURL
+            if let existingURL {
+                clip.localFileURL = existingURL
                 clip.downloadState = .ready
                 clip.downloadProgress = 1.0
                 clip.lastErrorMessage = nil
@@ -219,8 +220,8 @@ private extension UserDefaultsClipLibraryRepository {
             return true
         }
         
-        if fileStore.fileExists(for: sourceID) {
-            clip.localFileURL = fallbackURL
+        if let existingURL {
+            clip.localFileURL = existingURL
             clip.downloadState = .ready
             clip.downloadProgress = 1.0
             clip.lastErrorMessage = nil
